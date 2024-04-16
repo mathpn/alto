@@ -84,3 +84,53 @@ plt.figure(figsize=(10, 15))
 combined = np.hstack((image, rotated_image))
 plt.imshow(combined)
 
+# %%
+
+image = rotated_image  # XXX
+
+line_thickness = int(image.shape[0] / 150)
+binary_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+for line in filtered_lines:
+    x1, y1, x2, y2 = line[0]
+    cv2.line(binary_image, (x1, y1), (x2, y2), 255, line_thickness)
+
+horizontal_projection = np.sum(binary_image, axis=1)
+threshold_value = 0.7 * np.max(horizontal_projection)
+peaks = np.where(horizontal_projection > threshold_value)[0]
+
+# Define regions based on identified peaks and their neighboring areas
+regions = []
+current_region = []
+for i in range(len(peaks) - 1):
+    if peaks[i + 1] - peaks[i] > 1:
+        if current_region:
+            regions.append((current_region[0], current_region[-1]))
+            current_region = []
+        continue
+    current_region.extend(range(peaks[i], peaks[i + 1]))
+
+if current_region:
+    regions.append((current_region[0], current_region[-1]))
+
+plt.imshow(binary_image)
+plt.show()
+
+plt.plot(horizontal_projection)
+plt.show()
+# Group the lines within each region
+binary_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+grouped_lines = []
+for region in regions:
+    region_lines = []
+    for line in filtered_lines:
+        x1, y1, x2, y2 = line[0]
+        y_min, y_max = sorted((y1, y2))
+        if y_min < region[0] or y_max > region[1]:
+            continue
+        cv2.line(binary_image, (x1, y1), (x2, y2), 255, line_thickness)
+        region_lines.append(line)
+    grouped_lines.append(region_lines)
+
+plt.imshow(binary_image)
+
+# %%
