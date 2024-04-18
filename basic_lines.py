@@ -122,13 +122,25 @@ binary_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
 grouped_lines = []
 for region in regions:
     region_lines = []
+    region_x_min = image.shape[1]
+    region_x_max = 0
     for line in filtered_lines:
         x1, y1, x2, y2 = line[0]
         y_min, y_max = sorted((y1, y2))
         if y_min < region[0] or y_max > region[1]:
             continue
-        cv2.line(binary_image, (x1, y1), (x2, y2), 255, line_thickness)
+        x_min, x_max = sorted((x1, x2))
+        region_x_min = min(region_x_min, x_min)
+        region_x_max = max(region_x_max, x_max)
         region_lines.append(line)
+
+    if (region_x_max - region_x_min) / image.shape[1] < 0.5:  # XXX
+        continue
+
+    for line in region_lines:
+        x1, y1, x2, y2 = line[0]
+        cv2.line(binary_image, (x1, y1), (x2, y2), 255, line_thickness)
+
     grouped_lines.append(region_lines)
 
 plt.imshow(binary_image)
