@@ -179,3 +179,20 @@ for y_avg in y_values:
 plt.plot(np.hstack(smoothed_y_values))
 
 # %%
+
+points = []
+for y_avg in smoothed_y_values:
+    valid_indices = np.where(y_avg > 0)[0]
+    print(valid_indices)
+    points.extend((index, y_avg[index]) for index in valid_indices)
+
+points = np.array(points)
+plt.scatter(points[:, 0], points[:, 1])
+
+# %%
+
+sampled_points = points[::50]
+
+plt.scatter(sampled_points[:, 0], sampled_points[:, 1])
+
+# %%
