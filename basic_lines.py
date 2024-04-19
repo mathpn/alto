@@ -3,12 +3,15 @@ import cv2
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 from scipy.spatial import distance
+from scipy.signal import savgol_filter
+from scipy.interpolate import interp1d
 import numpy as np
 
 # Read the image
-image = cv2.imread("rotated.png")
+# image = cv2.imread("rotated.png")
 # image = cv2.imread("warped.jpg")
-# image = cv2.imread("./really_bad.png")
+# image = cv2.imread("okayish.png")
+image = cv2.imread("./really_bad.png")
 output_image = image.copy()
 
 
@@ -22,7 +25,7 @@ blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 edges = cv2.Canny(blurred, 50, 150)
 
 # Perform line detection using Hough transform
-lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 100, minLineLength=10, maxLineGap=10)
+lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 20, minLineLength=20, maxLineGap=10)
 
 # Filter lines based on their orientation
 filtered_lines = []
@@ -95,7 +98,7 @@ for line in filtered_lines:
     cv2.line(binary_image, (x1, y1), (x2, y2), 255, line_thickness)
 
 horizontal_projection = np.sum(binary_image, axis=1)
-threshold_value = 0.7 * np.max(horizontal_projection)
+threshold_value = 0.5 * np.max(horizontal_projection)
 peaks = np.where(horizontal_projection > threshold_value)[0]
 
 # Define regions based on identified peaks and their neighboring areas
@@ -144,5 +147,35 @@ for region in regions:
     grouped_lines.append(region_lines)
 
 plt.imshow(binary_image)
+
+# %%
+# Calculate the average y-coordinate for each x-coordinate along the horizontal span
+image_height = image.shape[0]
+image_width = image.shape[1]
+
+y_values = np.arange(image_width)
+y_values = []
+for region_lines in grouped_lines:
+    y_sum = np.zeros(image_width)
+    count = np.zeros(image_width)
+    for line in region_lines:
+        x1, y1, x2, y2 = line[0]
+        y_sum[min(x1, x2) : max(x1, x2) + 1] += np.linspace(y1, y2, abs(x2 - x1) + 1)
+        count[min(x1, x2) : max(x1, x2) + 1] += 1
+    avg_y = np.divide(y_sum, count, out=np.zeros_like(y_sum), where=count != 0)
+    y_values.append(avg_y)
+
+plt.plot(np.hstack(y_values))
+
+# %%
+
+# Smooth the average y-values using a Savitzky-Golay filter
+smoothed_y_values = []
+for y_avg in y_values:
+    smoothed_y = np.zeros_like(y_avg)
+    smoothed_y[y_avg > 0] = savgol_filter(y_avg[y_avg > 0], 250, 1)  # XXX parameter
+    smoothed_y_values.append(smoothed_y)
+
+plt.plot(np.hstack(smoothed_y_values))
 
 # %%
