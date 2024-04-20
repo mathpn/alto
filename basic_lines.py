@@ -180,19 +180,45 @@ plt.plot(np.hstack(smoothed_y_values))
 
 # %%
 
-points = []
+region_points = []
+sampled_region_points = []
 for y_avg in smoothed_y_values:
     valid_indices = np.where(y_avg > 0)[0]
-    print(valid_indices)
-    points.extend((index, y_avg[index]) for index in valid_indices)
-
-points = np.array(points)
-plt.scatter(points[:, 0], points[:, 1])
+    points = np.array([(index, y_avg[index]) for index in valid_indices])
+    sampled_points = points[::50]
+    region_points.append(points)
+    sampled_region_points.append(sampled_points)
 
 # %%
+point_image = rotated_image.copy()
 
-sampled_points = points[::50]
+for region in sampled_region_points:
+    for point in region:
+        cv2.circle(
+            point_image,
+            (int(point[0]), int(point[1])),
+            radius=20,
+            color=(0, 255, 255),
+            thickness=-1,
+        )
 
-plt.scatter(sampled_points[:, 0], sampled_points[:, 1])
+plt.figure(figsize=(10, 10))
+plt.imshow(point_image)
+# %%
+
+for points_array in sampled_region_points:
+    # Compute the PCA with one component
+    mean, eigenvectors = cv2.PCACompute(points_array, mean=None, maxComponents=1)
+
+    direction_vector = eigenvectors[0]
+    unit_direction = direction_vector / np.linalg.norm(direction_vector)
+
+    inv_direction = np.array([-unit_direction[1], unit_direction[0]])
+    projected_points = np.outer(
+        np.dot(points_array, unit_direction), unit_direction
+    ) + np.outer(np.dot(mean, inv_direction), inv_direction)
+    plt.scatter(points_array[:, 0], points_array[:, 1])
+    plt.scatter(projected_points[:, 0], projected_points[:, 1])
+    plt.show()
 
 # %%
