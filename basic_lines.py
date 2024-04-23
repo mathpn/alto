@@ -11,7 +11,7 @@ import numpy as np
 # image = cv2.imread("rotated.png")
 # image = cv2.imread("warped.jpg")
 # image = cv2.imread("okayish.png")
-image = cv2.imread("./really_bad.png")
+image = cv2.imread("./really_bad_cropped.png")
 output_image = image.copy()
 
 
@@ -206,7 +206,9 @@ plt.figure(figsize=(10, 10))
 plt.imshow(point_image)
 # %%
 
+pca_points, true_points = [], []
 for points_array in sampled_region_points:
+    true_points.append(points_array)  # XXX wasteful
     # Compute the PCA with one component
     mean, eigenvectors = cv2.PCACompute(points_array, mean=None, maxComponents=1)
 
@@ -217,8 +219,173 @@ for points_array in sampled_region_points:
     projected_points = np.outer(
         np.dot(points_array, unit_direction), unit_direction
     ) + np.outer(np.dot(mean, inv_direction), inv_direction)
+    pca_points.append(projected_points)
     plt.scatter(points_array[:, 0], points_array[:, 1])
     plt.scatter(projected_points[:, 0], projected_points[:, 1])
     plt.show()
 
+pca_points = np.vstack(pca_points)
+true_points = np.vstack(true_points)
 # %%
+
+FOCAL_LENGTH = 1.2
+
+
+def K():
+    return np.array(
+        [
+            [FOCAL_LENGTH, 0, 0],
+            [0, FOCAL_LENGTH, 0],
+            [0, 0, 1],
+        ],
+        dtype=np.float32,
+    )
+
+
+def get_default_params(corners):
+    page_width, page_height = [np.linalg.norm(corners[i] - corners[0]) for i in (1, -1)]
+    cubic_slopes = [0.0, 0.0]  # initial guess for the cubic has no slope
+    # object points of flat page in 3D coordinates
+    corners_object3d = np.array(
+        [
+            [0, 0, 0],
+            [page_width, 0, 0],
+            [page_width, page_height, 0],
+            [0, page_height, 0],
+        ]
+    )
+    # estimate rotation and translation from four 2D-to-3D point correspondences
+    _, rvec, tvec = cv2.solvePnP(corners_object3d, corners, K(), np.zeros(5))
+    params = np.hstack(
+        (
+            np.array(rvec).flatten(),
+            np.array(tvec).flatten(),
+            np.array(cubic_slopes).flatten(),
+        )
+    )
+    return (page_width, page_height), params
+
+
+# %%
+img_height, img_width, *_ = image.shape
+corners = np.array(
+    [
+        [[0, 0.0]],
+        [[img_width, 0]],
+        [[img_width, img_height]],
+        [[0, img_height]],
+    ]
+)
+# corners = np.array(
+#     [
+#         [[0, 0.0]],
+#         [[1, 0]],
+#         [[1, 1]],
+#         [[0, 1]],
+#     ]
+# )
+
+(width, height), params = get_default_params(corners)
+
+# %%
+
+RVEC_IDX = slice(0, 3)  # Index of rvec in params vector (slice: pair of values)
+TVEC_IDX = slice(3, 6)  # Index of tvec in params vector (slice: pair of values)
+CUBIC_IDX = slice(
+    6, 8
+)  # Index of cubic slopes in params vector (slice: pair of values)
+
+
+def project_xy(xy_coords, pvec):
+    """
+    Get cubic polynomial coefficients given by:
+
+      f(0) = 0, f'(0) = alpha
+      f(1) = 0, f'(1) = beta
+    """
+    alpha, beta = tuple(pvec[CUBIC_IDX])
+    poly = np.array([alpha + beta, -2 * alpha - beta, alpha, 0])
+
+    xy_coords = xy_coords.reshape((-1, 2))
+    z_coords = np.polyval(poly, xy_coords[:, 0])
+
+    objpoints = np.hstack((xy_coords, z_coords.reshape((-1, 1))))
+    image_points, _ = cv2.projectPoints(
+        objpoints,
+        pvec[RVEC_IDX],
+        pvec[TVEC_IDX],
+        K(),
+        np.zeros(5),
+    )
+    return image_points
+
+
+# %%
+
+
+def remap(img, params):
+    height, width = img.shape
+    page_x_range = np.linspace(0, width, 100)  # XXX
+    page_y_range = np.linspace(0, height, 100)
+    page_x_coords, page_y_coords = np.meshgrid(page_x_range, page_y_range)
+    page_xy_coords = np.hstack(
+        (
+            page_x_coords.flatten().reshape((-1, 1)),
+            page_y_coords.flatten().reshape((-1, 1)),
+        )
+    )
+    page_xy_coords = page_xy_coords.astype(np.float32)
+    image_points = project_xy(page_xy_coords, params)
+    # image_points = norm2pix(img.shape, image_points, False)
+    image_x_coords = image_points[:, 0, 0].reshape(page_x_coords.shape)
+    image_y_coords = image_points[:, 0, 1].reshape(page_y_coords.shape)
+    image_x_coords = cv2.resize(
+        image_x_coords, (width, height), interpolation=cv2.INTER_CUBIC
+    )
+    image_y_coords = cv2.resize(
+        image_y_coords, (width, height), interpolation=cv2.INTER_CUBIC
+    )
+    remapped = cv2.remap(
+        img,
+        image_x_coords,
+        image_y_coords,
+        cv2.INTER_CUBIC,
+        None,
+        cv2.BORDER_REPLICATE,
+    )
+    return remapped
+
+
+# %%
+
+img_remapped = remap(binary_image, params)
+plt.imshow(img_remapped)
+# %%
+
+plt.imshow(img_remapped)
+# %%
+
+(width, height), params = get_default_params(corners)
+
+baseline_img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+_, baseline_img = cv2.threshold(baseline_img, 100, 255, cv2.THRESH_BINARY)
+plt.imshow(baseline_img)
+plt.show()
+
+# %%
+
+ref_points = project_xy(true_points, params)
+pca_points = pca_points.copy()
+
+
+def objective(pvec, *args):
+    ppts = project_xy(pca_points, pvec)
+    loss = np.mean((ppts - ref_points) ** 2)
+    return loss
+
+
+print(f"baseline = {objective(params):.4f}")
+print("--------------------------------")
+# %%
+a = minimize(objective, params, "Powell")
+print(a)
