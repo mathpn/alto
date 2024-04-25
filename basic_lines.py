@@ -270,20 +270,13 @@ def get_default_params(corners):
 img_height, img_width, *_ = image.shape
 corners = np.array(
     [
-        [[0, 0.0]],
-        [[img_width, 0]],
-        [[img_width, img_height]],
-        [[0, img_height]],
+        sampled_region_points[0][0],
+        sampled_region_points[0][-1],
+        sampled_region_points[-1][-1],
+        sampled_region_points[-1][0],
     ]
 )
-# corners = np.array(
-#     [
-#         [[0, 0.0]],
-#         [[1, 0]],
-#         [[1, 1]],
-#         [[0, 1]],
-#     ]
-# )
+print(corners)
 
 (width, height), params = get_default_params(corners)
 
