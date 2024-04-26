@@ -302,7 +302,7 @@ corners = np.array(
 corners = pix2norm(image.shape, corners)[0]
 print(corners)
 
-(width, height), params = get_default_params(corners)
+rough_dims, params = get_default_params(corners)
 
 # %%
 
@@ -391,16 +391,16 @@ def remap(img, page_dims, params):
 
 # %%
 
-img_remapped = remap(binary_image, [1, 1.89], params)
+img_remapped = remap(binary_image, rough_dims, params)
 # %%
 
 plt.imshow(img_remapped)
 # %%
 
-(width, height), params = get_default_params(corners)
+rough_dims, params = get_default_params(corners)
 
 baseline_img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-_, baseline_img = cv2.threshold(baseline_img, 100, 255, cv2.THRESH_BINARY)
+_, baseline_img = cv2.threshold(baseline_img, 80, 255, cv2.THRESH_BINARY)
 plt.imshow(baseline_img)
 plt.show()
 
@@ -411,26 +411,35 @@ pca_points = pca_points.copy()
 
 
 def objective(pvec, *args):
-    print(pvec)
     ppts = project_xy(pca_points, pvec)
-    loss = np.sum(((ppts - ref_points) ** 2).sum(axis=1))
-    # print(ppts[:10, 0, :])
-    # print(ref_points[:10, 0, :])
-    print((ppts - ref_points)[:10, 0, :])
-    print(np.power(ppts - ref_points, 2).mean())
-    print("--------")
+    loss = np.sum(((ppts - ref_points) ** 2))
     return loss
 
 
 print(f"baseline = {objective(params):.4f}")
 print("--------------------------------")
 # %%
-a = minimize(objective, params, "Powell")
-print(a)
+res = minimize(objective, params, "Powell")
+print(res)
+
+
+def get_page_dims(corners, rough_dims, params):
+    dst_br = corners[2].flatten()
+    dims = np.array(rough_dims)
+
+    def objective(dims):
+        proj_br = project_xy(dims, params)
+        return np.sum((dst_br - proj_br.flatten()) ** 2)
+
+    res = minimize(objective, dims, method="Powell")
+    dims = res.x
+    print("  got page dims", dims[0], "x", dims[1])
+    return dims
+
 
 # %%
 
-objective(a.x)
+objective(res.x)
 # %%
 
 
@@ -438,11 +447,12 @@ def minmax(arr):
     return (arr - arr.min()) / (arr.max() - arr.min())
 
 
-optimal_params = a.x
-# optimal_params[-1] = 0.00000000005
-optimal_params[-2] = 0.00000000015
-img_remapped = remap(baseline_img, [1, 1.89], optimal_params)
+optimal_params = res.x
+page_dims = get_page_dims(corners, rough_dims, optimal_params)
+img_remapped = remap(baseline_img, page_dims, optimal_params)
 img_remapped = minmax(img_remapped)
 
 plt.imshow(img_remapped)
+plt.show()
+plt.imshow(baseline_img)
 # %%
