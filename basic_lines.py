@@ -9,9 +9,9 @@ import numpy as np
 
 # Read the image
 # image = cv2.imread("rotated.png")
-# image = cv2.imread("warped.jpg")
+image = cv2.imread("warped.jpg")
 # image = cv2.imread("okayish.png")
-image = cv2.imread("./really_bad_cropped.png")
+# image = cv2.imread("./really_bad_cropped.png")
 output_image = image.copy()
 
 
@@ -228,7 +228,30 @@ pca_points = np.vstack(pca_points)
 true_points = np.vstack(true_points)
 # %%
 
-FOCAL_LENGTH = 1.2
+
+def pix2norm(shape, pts):
+    height, width = shape[:2]
+    scl = 2.0 / (max(height, width))
+    offset = np.array([width, height], dtype=pts.dtype).reshape((-1, 1, 2)) * 0.5
+    return (pts - offset) * scl
+
+
+def norm2pix(shape, pts, as_integer):
+    height, width = shape[:2]
+    scl = max(height, width) * 0.5
+    offset = np.array([0.5 * width, 0.5 * height], dtype=pts.dtype).reshape((-1, 1, 2))
+    rval = pts * scl + offset
+    return (rval + 0.5).astype(int) if as_integer else rval
+
+
+# %%
+
+pca_points = pix2norm(image.shape, pca_points)
+true_points = pix2norm(image.shape, true_points)
+
+
+# %%
+FOCAL_LENGTH = 1.8
 
 
 def K():
@@ -276,6 +299,7 @@ corners = np.array(
         sampled_region_points[-1][0],
     ]
 )
+corners = pix2norm(image.shape, corners)[0]
 print(corners)
 
 (width, height), params = get_default_params(corners)
@@ -315,11 +339,25 @@ def project_xy(xy_coords, pvec):
 
 # %%
 
+OUTPUT_ZOOM = 1.0
+REMAP_DECIMATE = 16
 
-def remap(img, params):
-    height, width = img.shape
-    page_x_range = np.linspace(0, width, 100)  # XXX
-    page_y_range = np.linspace(0, height, 100)
+
+def round_nearest_multiple(i, factor):
+    i = int(i)
+    rem = i % factor
+    return i + factor - rem if rem else i
+
+
+# TODO continue here
+def remap(img, page_dims, params):
+    height = 0.5 * page_dims[1] * OUTPUT_ZOOM * img.shape[0]
+    height = round_nearest_multiple(height, REMAP_DECIMATE)
+    width = round_nearest_multiple(height * page_dims[0] / page_dims[1], REMAP_DECIMATE)
+    print("  output will be {}x{}".format(width, height))
+    height_small, width_small = np.floor_divide([height, width], REMAP_DECIMATE)
+    page_x_range = np.linspace(0, page_dims[0], width_small)
+    page_y_range = np.linspace(0, page_dims[1], height_small)
     page_x_coords, page_y_coords = np.meshgrid(page_x_range, page_y_range)
     page_xy_coords = np.hstack(
         (
@@ -329,7 +367,7 @@ def remap(img, params):
     )
     page_xy_coords = page_xy_coords.astype(np.float32)
     image_points = project_xy(page_xy_coords, params)
-    # image_points = norm2pix(img.shape, image_points, False)
+    image_points = norm2pix(img.shape, image_points, False)
     image_x_coords = image_points[:, 0, 0].reshape(page_x_coords.shape)
     image_y_coords = image_points[:, 0, 1].reshape(page_y_coords.shape)
     image_x_coords = cv2.resize(
@@ -338,8 +376,10 @@ def remap(img, params):
     image_y_coords = cv2.resize(
         image_y_coords, (width, height), interpolation=cv2.INTER_CUBIC
     )
+    # img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    img_gray = img  # XXX
     remapped = cv2.remap(
-        img,
+        img_gray,
         image_x_coords,
         image_y_coords,
         cv2.INTER_CUBIC,
@@ -351,8 +391,7 @@ def remap(img, params):
 
 # %%
 
-img_remapped = remap(binary_image, params)
-plt.imshow(img_remapped)
+img_remapped = remap(binary_image, [1, 1.89], params)
 # %%
 
 plt.imshow(img_remapped)
@@ -372,8 +411,14 @@ pca_points = pca_points.copy()
 
 
 def objective(pvec, *args):
+    print(pvec)
     ppts = project_xy(pca_points, pvec)
-    loss = np.mean((ppts - ref_points) ** 2)
+    loss = np.sum(((ppts - ref_points) ** 2).sum(axis=1))
+    # print(ppts[:10, 0, :])
+    # print(ref_points[:10, 0, :])
+    print((ppts - ref_points)[:10, 0, :])
+    print(np.power(ppts - ref_points, 2).mean())
+    print("--------")
     return loss
 
 
@@ -382,3 +427,22 @@ print("--------------------------------")
 # %%
 a = minimize(objective, params, "Powell")
 print(a)
+
+# %%
+
+objective(a.x)
+# %%
+
+
+def minmax(arr):
+    return (arr - arr.min()) / (arr.max() - arr.min())
+
+
+optimal_params = a.x
+# optimal_params[-1] = 0.00000000005
+optimal_params[-2] = 0.00000000015
+img_remapped = remap(baseline_img, [1, 1.89], optimal_params)
+img_remapped = minmax(img_remapped)
+
+plt.imshow(img_remapped)
+# %%
