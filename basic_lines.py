@@ -1,4 +1,6 @@
 # %%
+from datetime import datetime as dt
+
 import cv2
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
@@ -9,9 +11,9 @@ import numpy as np
 
 # Read the image
 # image = cv2.imread("rotated.png")
-image = cv2.imread("warped.jpg")
+# image = cv2.imread("warped.jpg")
 # image = cv2.imread("okayish.png")
-# image = cv2.imread("./really_bad_cropped.png")
+image = cv2.imread("./really_bad_cropped.png")
 output_image = image.copy()
 
 
@@ -180,54 +182,6 @@ plt.plot(np.hstack(smoothed_y_values))
 
 # %%
 
-region_points = []
-sampled_region_points = []
-for y_avg in smoothed_y_values:
-    valid_indices = np.where(y_avg > 0)[0]
-    points = np.array([(index, y_avg[index]) for index in valid_indices])
-    sampled_points = points[::50]
-    region_points.append(points)
-    sampled_region_points.append(sampled_points)
-
-# %%
-point_image = rotated_image.copy()
-
-for region in sampled_region_points:
-    for point in region:
-        cv2.circle(
-            point_image,
-            (int(point[0]), int(point[1])),
-            radius=20,
-            color=(0, 255, 255),
-            thickness=-1,
-        )
-
-plt.figure(figsize=(10, 10))
-plt.imshow(point_image)
-# %%
-
-pca_points, true_points = [], []
-for points_array in sampled_region_points:
-    true_points.append(points_array)  # XXX wasteful
-    # Compute the PCA with one component
-    mean, eigenvectors = cv2.PCACompute(points_array, mean=None, maxComponents=1)
-
-    direction_vector = eigenvectors[0]
-    unit_direction = direction_vector / np.linalg.norm(direction_vector)
-
-    inv_direction = np.array([-unit_direction[1], unit_direction[0]])
-    projected_points = np.outer(
-        np.dot(points_array, unit_direction), unit_direction
-    ) + np.outer(np.dot(mean, inv_direction), inv_direction)
-    pca_points.append(projected_points)
-    plt.scatter(points_array[:, 0], points_array[:, 1])
-    plt.scatter(projected_points[:, 0], projected_points[:, 1])
-    plt.show()
-
-pca_points = np.vstack(pca_points)
-true_points = np.vstack(true_points)
-# %%
-
 
 def pix2norm(shape, pts):
     height, width = shape[:2]
@@ -246,11 +200,91 @@ def norm2pix(shape, pts, as_integer):
 
 # %%
 
-pca_points = pix2norm(image.shape, pca_points)
-true_points = pix2norm(image.shape, true_points)
-
+region_points = []
+span_points = []
+for y_avg in smoothed_y_values:
+    valid_indices = np.where(y_avg > 0)[0]
+    points = np.array([(index, y_avg[index]) for index in valid_indices])
+    sampled_points = points[::50]
+    region_points.append(sampled_points)
+    sampled_points = pix2norm(image.shape, sampled_points)
+    sampled_points = sampled_points.reshape(-1, 1, 2)
+    span_points.append(sampled_points)
 
 # %%
+point_image = rotated_image.copy()
+
+for region in region_points:
+    for point in region:
+        cv2.circle(
+            point_image,
+            (int(point[0]), int(point[1])),
+            radius=20,
+            color=(0, 255, 255),
+            thickness=-1,
+        )
+
+plt.figure(figsize=(10, 10))
+plt.imshow(point_image)
+
+# %%
+
+PAGE_MARGIN_Y = 50
+PAGE_MARGIN_X = 50
+
+
+def calculate_page_extents(image):
+    height, width = image.shape[:2]
+    xmin = PAGE_MARGIN_X
+    ymin = PAGE_MARGIN_Y
+    xmax, ymax = (width - xmin), (height - ymin)
+    pagemask = np.zeros((height, width), dtype=np.uint8)
+    cv2.rectangle(pagemask, (xmin, ymin), (xmax, ymax), color=255, thickness=-1)
+    page_outline = np.array([[xmin, ymin], [xmin, ymax], [xmax, ymax], [xmax, ymin]])
+    return pagemask, page_outline
+
+
+def keypoints_from_samples(small, pagemask, page_outline, span_points):
+    all_evecs = np.array([[0.0, 0.0]])
+    all_weights = 0
+    for points in span_points:
+        _, evec = cv2.PCACompute(points.reshape((-1, 2)), mean=None, maxComponents=1)
+        weight = np.linalg.norm(points[-1] - points[0])
+        all_evecs += evec * weight
+        all_weights += weight
+    evec = all_evecs / all_weights
+    x_dir = evec.flatten()
+    if x_dir[0] < 0:
+        x_dir = -x_dir
+    y_dir = np.array([-x_dir[1], x_dir[0]])
+    pagecoords = cv2.convexHull(page_outline)
+    pagecoords = pix2norm(pagemask.shape, pagecoords.reshape((-1, 1, 2))).reshape(
+        (-1, 2)
+    )
+    px_coords = np.dot(pagecoords, x_dir)
+    py_coords = np.dot(pagecoords, y_dir)
+    px0, px1 = px_coords.min(), px_coords.max()
+    py0, py1 = py_coords.min(), py_coords.max()
+    # [px0,px1,px1,px0] for first bit of p00,p10,p11,p01
+    x_dir_coeffs = np.pad([px0, px1], 2, mode="symmetric")[2:].reshape(-1, 1)
+    # [py0,py0,py1,py1] for second bit of p00,p10,p11,p01
+    y_dir_coeffs = np.repeat([py0, py1], 2).reshape(-1, 1)
+    corners = np.expand_dims((x_dir_coeffs * x_dir) + (y_dir_coeffs * y_dir), 1)
+    xcoords, ycoords = [], []
+    for points in span_points:
+        pts = points.reshape((-1, 2))
+        px_coords, py_coords = np.dot(pts, np.transpose([x_dir, y_dir])).T
+        xcoords.append(px_coords - px0)
+        ycoords.append(py_coords.mean() - py0)
+    return corners, np.array(ycoords), xcoords
+
+
+pagemask, page_outline = calculate_page_extents(image)
+corners, ycoords, xcoords = keypoints_from_samples(
+    image, pagemask, page_outline, span_points
+)
+# %%
+
 FOCAL_LENGTH = 1.8
 
 
@@ -265,7 +299,8 @@ def K():
     )
 
 
-def get_default_params(corners):
+# TODO add span points to params
+def get_default_params(corners, ycoords, xcoords):
     page_width, page_height = [np.linalg.norm(corners[i] - corners[0]) for i in (1, -1)]
     cubic_slopes = [0.0, 0.0]  # initial guess for the cubic has no slope
     # object points of flat page in 3D coordinates
@@ -279,30 +314,27 @@ def get_default_params(corners):
     )
     # estimate rotation and translation from four 2D-to-3D point correspondences
     _, rvec, tvec = cv2.solvePnP(corners_object3d, corners, K(), np.zeros(5))
+    span_counts = [*map(len, xcoords)]
     params = np.hstack(
         (
             np.array(rvec).flatten(),
             np.array(tvec).flatten(),
             np.array(cubic_slopes).flatten(),
+            ycoords.flatten(),
         )
+        + tuple(xcoords)
     )
-    return (page_width, page_height), params
+    return (page_width, page_height), span_counts, params
 
 
 # %%
-img_height, img_width, *_ = image.shape
-corners = np.array(
-    [
-        sampled_region_points[0][0],
-        sampled_region_points[0][-1],
-        sampled_region_points[-1][-1],
-        sampled_region_points[-1][0],
-    ]
-)
-corners = pix2norm(image.shape, corners)[0]
-print(corners)
 
-rough_dims, params = get_default_params(corners)
+rough_dims, span_counts, params = get_default_params(corners, ycoords, xcoords)
+
+dstpoints = np.vstack(
+    (corners[0].reshape(1, 1, 2),)
+    + tuple(point.reshape(-1, 1, 2) for point in span_points)
+)
 
 # %%
 
@@ -311,6 +343,18 @@ TVEC_IDX = slice(3, 6)  # Index of tvec in params vector (slice: pair of values)
 CUBIC_IDX = slice(
     6, 8
 )  # Index of cubic slopes in params vector (slice: pair of values)
+
+
+def make_keypoint_index(span_counts):
+    nspans, npts = len(span_counts), sum(span_counts)
+    keypoint_index = np.zeros((npts + 1, 2), dtype=int)
+    start = 1
+    for i, count in enumerate(span_counts):
+        end = start + count
+        keypoint_index[start : start + end, 1] = 8 + i
+        start = end
+    keypoint_index[1:, 0] = np.arange(npts) + 8 + nspans
+    return keypoint_index
 
 
 def project_xy(xy_coords, pvec):
@@ -335,6 +379,30 @@ def project_xy(xy_coords, pvec):
         np.zeros(5),
     )
     return image_points
+
+
+def project_keypoints(pvec, keypoint_index):
+    xy_coords = pvec[keypoint_index]
+    xy_coords[0, :] = 0
+    return project_xy(xy_coords, pvec)
+
+
+def optimise_params(small, dstpoints, span_counts, params, debug_lvl):
+    keypoint_index = make_keypoint_index(span_counts)
+
+    def objective(pvec):
+        ppts = project_keypoints(pvec, keypoint_index)
+        return np.sum((dstpoints - ppts) ** 2)
+
+    print("  initial objective is", objective(params))
+    print("  optimizing", len(params), "parameters...")
+    start = dt.now()
+    res = minimize(objective, params, method="Powell")
+    end = dt.now()
+    print(f"  optimization took {round((end - start).total_seconds(), 2)} sec.")
+    print(f"  final objective is {res.fun}")
+    params = res.x
+    return params
 
 
 # %%
@@ -376,8 +444,7 @@ def remap(img, page_dims, params):
     image_y_coords = cv2.resize(
         image_y_coords, (width, height), interpolation=cv2.INTER_CUBIC
     )
-    # img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    img_gray = img  # XXX
+    img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     remapped = cv2.remap(
         img_gray,
         image_x_coords,
@@ -391,36 +458,17 @@ def remap(img, page_dims, params):
 
 # %%
 
-img_remapped = remap(binary_image, rough_dims, params)
+_, binary_image = cv2.threshold(image, 100, 255, cv2.THRESH_BINARY)
+
+baseline_img = remap(binary_image, rough_dims, params)
 # %%
 
-plt.imshow(img_remapped)
-# %%
-
-rough_dims, params = get_default_params(corners)
-
-baseline_img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-_, baseline_img = cv2.threshold(baseline_img, 80, 255, cv2.THRESH_BINARY)
 plt.imshow(baseline_img)
-plt.show()
-
 # %%
 
-ref_points = project_xy(true_points, params)
-pca_points = pca_points.copy()
+optimal_params = optimise_params(binary_image, dstpoints, span_counts, params, 1)
 
-
-def objective(pvec, *args):
-    ppts = project_xy(pca_points, pvec)
-    loss = np.sum(((ppts - ref_points) ** 2))
-    return loss
-
-
-print(f"baseline = {objective(params):.4f}")
-print("--------------------------------")
 # %%
-res = minimize(objective, params, "Powell")
-print(res)
 
 
 def get_page_dims(corners, rough_dims, params):
@@ -439,18 +487,20 @@ def get_page_dims(corners, rough_dims, params):
 
 # %%
 
-objective(res.x)
-# %%
-
 
 def minmax(arr):
     return (arr - arr.min()) / (arr.max() - arr.min())
 
 
-optimal_params = res.x
 page_dims = get_page_dims(corners, rough_dims, optimal_params)
-img_remapped = remap(baseline_img, page_dims, optimal_params)
-img_remapped = minmax(img_remapped)
+print(page_dims)
+if np.any(page_dims < 0):
+    # Fallback: see https://github.com/lmmx/page-dewarp/issues/9
+    print("Got a negative page dimension! Falling back to rough estimate")
+    page_dims = rough_dims
+
+img_remapped = remap(binary_image, rough_dims, optimal_params)
+# img_remapped = minmax(img_remapped)
 
 plt.imshow(img_remapped)
 plt.show()
