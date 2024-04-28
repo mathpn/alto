@@ -93,7 +93,10 @@ plt.imshow(combined)
 
 image = rotated_image  # XXX
 
-line_thickness = int(image.shape[0] / 150)
+PAGE_MARGIN_Y = 50
+PAGE_MARGIN_X = 50
+
+line_thickness = int(image.shape[0] / 200)
 binary_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
 for line in filtered_lines:
     x1, y1, x2, y2 = line[0]
@@ -103,82 +106,63 @@ horizontal_projection = np.sum(binary_image, axis=1)
 threshold_value = 0.5 * np.max(horizontal_projection)
 peaks = np.where(horizontal_projection > threshold_value)[0]
 
-# Define regions based on identified peaks and their neighboring areas
-regions = []
-current_region = []
-for i in range(len(peaks) - 1):
-    if peaks[i + 1] - peaks[i] > 1:
-        if current_region:
-            regions.append((current_region[0], current_region[-1]))
-            current_region = []
-        continue
-    current_region.extend(range(peaks[i], peaks[i + 1]))
-
-if current_region:
-    regions.append((current_region[0], current_region[-1]))
-
 plt.imshow(binary_image)
 plt.show()
 
-plt.plot(horizontal_projection)
-plt.show()
-# Group the lines within each region
-binary_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
-grouped_lines = []
-for region in regions:
-    region_lines = []
-    region_x_min = image.shape[1]
-    region_x_max = 0
-    for line in filtered_lines:
-        x1, y1, x2, y2 = line[0]
-        y_min, y_max = sorted((y1, y2))
-        if y_min < region[0] or y_max > region[1]:
-            continue
-        x_min, x_max = sorted((x1, x2))
-        region_x_min = min(region_x_min, x_min)
-        region_x_max = max(region_x_max, x_max)
-        region_lines.append(line)
+# %%
 
-    if (region_x_max - region_x_min) / image.shape[1] < 0.5:  # XXX
+
+def box(width, height):
+    return np.ones((height, width), dtype=np.uint8)
+
+# %%
+
+kernel = np.ones((5, 5), np.uint8)  # Adjust kernel size as needed
+smoothed_image = cv2.dilate(binary_image, box(3, 3), iterations=5)
+# smoothed_image = cv2.erode(smoothed_image, box(5, 5), iterations=1)
+# smoothed_image = cv2.morphologyEx(binary_image, cv2.MORPH_GRADIENT, kernel, iterations=1)
+# smoothed_image = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+contours, _ = cv2.findContours(
+    smoothed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+)
+
+image_with_contours = cv2.cvtColor(smoothed_image, cv2.COLOR_GRAY2BGR)
+
+min_width = 0.3 * image.shape[0]
+region_points = []
+
+for contour in contours:
+    x, y, w, h = cv2.boundingRect(contour)
+    if w < min_width:
         continue
 
-    for line in region_lines:
-        x1, y1, x2, y2 = line[0]
-        cv2.line(binary_image, (x1, y1), (x2, y2), 255, line_thickness)
+    # Approximate the contour with a polygon
+    epsilon = 0.005 * cv2.arcLength(contour, True) # XXX
+    approx = cv2.approxPolyDP(contour, epsilon, True)
+    # Draw the simplified contour on the image
+    cv2.drawContours(image_with_contours, [approx], -1, (0, 255, 0), thickness=10)
 
-    grouped_lines.append(region_lines)
+    mask = np.zeros_like(binary_image)
+    cv2.drawContours(mask, [approx], 0, (255), thickness=cv2.FILLED)
 
-plt.imshow(binary_image)
+    valid_points = np.argwhere(mask == 255)
+    sum_y = np.zeros(mask.shape[1])
+    np.add.at(sum_y, valid_points[:, 1], valid_points[:, 0])
+    count_y = np.bincount(valid_points[:, 1], minlength=len(sum_y))
+    avg_y = sum_y / (count_y + 1e-3)
+    smoothed_y = np.zeros_like(avg_y)
+    smoothed_y[avg_y > 0] = savgol_filter(avg_y[avg_y > 0], 250, 1)  # XXX parameter
+    valid_indices = np.where(avg_y > 0)[0]
+    # points = np.array([(index, avg_y[index]) for index in valid_indices]).astype(np.int64)
+    points = np.array([(index, smoothed_y[index]) for index in valid_indices]).astype(
+        np.int64
+    )
 
-# %%
-# Calculate the average y-coordinate for each x-coordinate along the horizontal span
-image_height = image.shape[0]
-image_width = image.shape[1]
+    region_points.append(points)
 
-y_values = np.arange(image_width)
-y_values = []
-for region_lines in grouped_lines:
-    y_sum = np.zeros(image_width)
-    count = np.zeros(image_width)
-    for line in region_lines:
-        x1, y1, x2, y2 = line[0]
-        y_sum[min(x1, x2) : max(x1, x2) + 1] += np.linspace(y1, y2, abs(x2 - x1) + 1)
-        count[min(x1, x2) : max(x1, x2) + 1] += 1
-    avg_y = np.divide(y_sum, count, out=np.zeros_like(y_sum), where=count != 0)
-    y_values.append(avg_y)
-
-plt.plot(np.hstack(y_values))
-
-# %%
-
-# Smooth the average y-values using a Savitzky-Golay filter
-smoothed_y_values = []
-for y_avg in y_values:
-    smoothed_y = np.zeros_like(y_avg)
-    smoothed_y[y_avg > 0] = savgol_filter(y_avg[y_avg > 0], 250, 1)  # XXX parameter
-    smoothed_y_values.append(smoothed_y)
-
-plt.plot(np.hstack(smoothed_y_values))
+plt.figure(figsize=(10, 10))
+plt.imshow(image_with_contours)
 
 # %%
 
@@ -200,16 +184,46 @@ def norm2pix(shape, pts, as_integer):
 
 # %%
 
-region_points = []
 span_points = []
-for y_avg in smoothed_y_values:
-    valid_indices = np.where(y_avg > 0)[0]
-    points = np.array([(index, y_avg[index]) for index in valid_indices])
-    sampled_points = points[::50]
-    region_points.append(sampled_points)
+for points in region_points:
+    sampled_points = points.tolist()[::100]
+    sampled_points = np.array(sampled_points)
     sampled_points = pix2norm(image.shape, sampled_points)
     sampled_points = sampled_points.reshape(-1, 1, 2)
     span_points.append(sampled_points)
+
+# %%
+
+# region_points = []
+# span_points = []
+# for y_avg in y_values:
+#     valid_indices = np.where(y_avg > 0)[0]
+#     points = np.array([(index, y_avg[index]) for index in valid_indices])
+#     x = points[:, 0]
+#     y = points[:, 1]
+
+#     coefficients = np.polyfit(x, y, 3)
+#     poly_function = np.poly1d(coefficients)
+
+#     sampled_x = np.linspace(min(x), max(x), 15)  # Adjust the number of points as needed
+#     sampled_y = poly_function(sampled_x)
+
+#     sampled_points = np.hstack([sampled_x.reshape(-1, 1), sampled_y.reshape(-1, 1)])
+#     region_points.append(sampled_points)
+#     sampled_points = pix2norm(image.shape, sampled_points)
+#     sampled_points = sampled_points.reshape(-1, 1, 2)
+#     span_points.append(sampled_points)
+
+#     # # Plot the original points and the fitted polynomial curve
+#     # plt.scatter(x, y, color='blue', label='Original Points')
+#     # plt.plot(sampled_x, sampled_y, color='red', label='Fitted Polynomial Curve')
+#     # plt.xlabel('X')
+#     # plt.ylabel('Y')
+#     # plt.title('Fitted Polynomial Curve')
+#     # plt.legend()
+#     # plt.grid(True)
+#     # plt.show()
+#     # break
 
 # %%
 point_image = rotated_image.copy()
@@ -221,6 +235,7 @@ for region in region_points:
             (int(point[0]), int(point[1])),
             radius=20,
             color=(0, 255, 255),
+            # color=128,
             thickness=-1,
         )
 
@@ -229,8 +244,10 @@ plt.imshow(point_image)
 
 # %%
 
-PAGE_MARGIN_Y = 50
-PAGE_MARGIN_X = 50
+plt.figure(figsize=(10, 10))
+plt.imshow(point_image + 100 * binary_image.reshape(*binary_image.shape, 1))
+
+# %%
 
 
 def calculate_page_extents(image):
@@ -505,4 +522,8 @@ img_remapped = remap(binary_image, rough_dims, optimal_params)
 plt.imshow(img_remapped)
 plt.show()
 plt.imshow(baseline_img)
+# %%
+
+cv2.imwrite("alto_original.png", baseline_img)
+cv2.imwrite("alto_remapped.png", img_remapped)
 # %%
