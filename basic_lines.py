@@ -115,6 +115,7 @@ plt.show()
 def box(width, height):
     return np.ones((height, width), dtype=np.uint8)
 
+
 # %%
 
 kernel = np.ones((5, 5), np.uint8)  # Adjust kernel size as needed
@@ -138,7 +139,7 @@ for contour in contours:
         continue
 
     # Approximate the contour with a polygon
-    epsilon = 0.005 * cv2.arcLength(contour, True) # XXX
+    epsilon = 0.005 * cv2.arcLength(contour, True)  # XXX
     approx = cv2.approxPolyDP(contour, epsilon, True)
     # Draw the simplified contour on the image
     cv2.drawContours(image_with_contours, [approx], -1, (0, 255, 0), thickness=10)
@@ -163,6 +164,113 @@ for contour in contours:
 
 plt.figure(figsize=(10, 10))
 plt.imshow(image_with_contours)
+
+# %%
+
+contours, _ = cv2.findContours(
+    smoothed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+)
+
+convex_hull_points = cv2.convexHull(np.concatenate(contours))
+
+image_with_hull = cv2.cvtColor(smoothed_image, cv2.COLOR_GRAY2BGR)
+
+# %%
+
+
+def convex_hull_with_n_points(points, n):
+    # Compute the convex hull of the input points
+    hull = cv2.convexHull(points)
+    full_area = cv2.contourArea(hull)
+
+    # If the number of points in the convex hull is greater than the desired number of points
+    if len(hull) > n:
+        # Initialize the smallest convex hull with all points
+        smallest_hull = hull.copy()
+
+        # Iteratively remove points until the desired number is reached
+        while len(smallest_hull) > n:
+            min_area_diff = float("inf")
+            point_to_remove = None
+
+            # Calculate the area of the convex hull after removing each point
+            for i, point in enumerate(smallest_hull):
+                temp_hull = np.delete(smallest_hull, i, axis=0)
+                area = cv2.contourArea(temp_hull)
+                area_diff = abs(full_area - area)
+                if area_diff < min_area_diff:
+                    min_area_diff = area_diff
+                    point_to_remove = i
+
+            # Remove the point that results in the smallest change in area
+            smallest_hull = np.delete(smallest_hull, point_to_remove, axis=0)
+
+        downsized_hull = smallest_hull
+    else:
+        downsized_hull = hull
+
+    return cv2.convexHull(downsized_hull.astype(np.int32))
+
+
+# https://gist.github.com/flashlib/e8261539915426866ae910d55a3f9959
+def order_points_new(pts):
+    # sort the points based on their x-coordinates
+    xSorted = pts[np.argsort(pts[:, 0]), :]
+
+    # grab the left-most and right-most points from the sorted
+    # x-roodinate points
+    leftMost = xSorted[:2, :]
+    rightMost = xSorted[2:, :]
+
+    # now, sort the left-most coordinates according to their
+    # y-coordinates so we can grab the top-left and bottom-left
+    # points, respectively
+    leftMost = leftMost[np.argsort(leftMost[:, 1]), :]
+    (tl, bl) = leftMost
+
+    # if use Euclidean distance, it will run in error when the object
+    # is trapezoid. So we should use the same simple y-coordinates order method.
+
+    # now, sort the right-most coordinates according to their
+    # y-coordinates so we can grab the top-right and bottom-right
+    # points, respectively
+    rightMost = rightMost[np.argsort(rightMost[:, 1]), :]
+    (tr, br) = rightMost
+
+    # return the coordinates in top-left, top-right,
+    # bottom-right, and bottom-left order
+    return np.array([tl, tr, br, bl], dtype=np.float32)
+
+
+downsized_hull = convex_hull_with_n_points(np.concatenate(contours), 4)
+
+cv2.drawContours(image_with_hull, [convex_hull_points], -1, (0, 255, 0), thickness=10)
+cv2.drawContours(image_with_hull, [downsized_hull], -1, (255, 0, 0), thickness=10)
+
+plt.imshow(image_with_hull)
+
+# %%
+
+height, width = smoothed_image.shape
+hull_corners = order_points_new(downsized_hull.reshape(-1, 2))
+output_corners = np.array(
+    [
+        [2 * PAGE_MARGIN_X, 2 * PAGE_MARGIN_Y],
+        [width - 2 * PAGE_MARGIN_X, 2 * PAGE_MARGIN_Y],
+        [width - 2 * PAGE_MARGIN_X, height - 2 * PAGE_MARGIN_Y],
+        [PAGE_MARGIN_X, height - 2 * PAGE_MARGIN_Y],
+    ],
+    dtype=np.float32,
+)
+output_corners = order_points_new(output_corners)
+
+perspective_matrix = cv2.getPerspectiveTransform(hull_corners, output_corners)
+
+perspective_image = cv2.warpPerspective(image, perspective_matrix, (width, height))
+
+plt.imshow(smoothed_image)
+plt.show()
+plt.imshow(perspective_image)
 
 # %%
 
