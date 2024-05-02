@@ -214,11 +214,6 @@ plt.imshow(point_image)
 
 # %%
 
-plt.figure(figsize=(10, 10))
-plt.imshow(point_image + 100 * binary_image.reshape(*binary_image.shape, 1))
-
-# %%
-
 
 def calculate_page_extents(image):
     height, width = image.shape[:2]
@@ -444,15 +439,13 @@ def remap(img, page_dims, params):
 
 # %%
 
-_, binary_image = cv2.threshold(image, 100, 255, cv2.THRESH_BINARY)
-
-baseline_img = remap(binary_image, rough_dims, params)
+baseline_img = remap(image, rough_dims, params)
 # %%
 
 plt.imshow(baseline_img)
 # %%
 
-optimal_params = optimise_params(binary_image, dstpoints, span_counts, params, 1)
+optimal_params = optimise_params(image, dstpoints, span_counts, params, 1)
 
 # %%
 
@@ -473,6 +466,7 @@ def get_page_dims(corners, rough_dims, params):
 
 # %%
 
+ADAPTIVE_WINSZ = 55  # Window size for adaptive threshold in reduced px
 
 def minmax(arr):
     return (arr - arr.min()) / (arr.max() - arr.min())
@@ -485,14 +479,31 @@ if np.any(page_dims < 0):
     print("Got a negative page dimension! Falling back to rough estimate")
     page_dims = rough_dims
 
-img_remapped = remap(binary_image, rough_dims, optimal_params)
+img_remapped = remap(image, rough_dims, optimal_params)
+img_remapped_binary = cv2.adaptiveThreshold(
+    img_remapped,
+    255,
+    cv2.ADAPTIVE_THRESH_MEAN_C,
+    cv2.THRESH_BINARY,
+    ADAPTIVE_WINSZ,
+    25,
+)
+
+img_binary = cv2.adaptiveThreshold(
+    gray,
+    255,
+    cv2.ADAPTIVE_THRESH_MEAN_C,
+    cv2.THRESH_BINARY,
+    ADAPTIVE_WINSZ,
+    25,
+)
 # img_remapped = minmax(img_remapped)
 
-plt.imshow(img_remapped)
+plt.imshow(img_remapped_binary)
 plt.show()
-plt.imshow(baseline_img)
+plt.imshow(img_binary)
 # %%
 
-cv2.imwrite("alto_original.png", baseline_img)
-cv2.imwrite("alto_remapped.png", img_remapped)
+cv2.imwrite("alto_original.png", img_binary)
+cv2.imwrite("alto_remapped.png", img_remapped_binary)
 # %%
