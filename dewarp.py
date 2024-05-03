@@ -1,8 +1,8 @@
+import argparse
 from datetime import datetime as dt
 
 import cv2
 import numpy as np
-from scipy.interpolate import interp1d
 from scipy.optimize import minimize
 from scipy.signal import savgol_filter
 from scipy.spatial import distance
@@ -65,7 +65,7 @@ def calculate_page_extents(image):
     return pagemask, page_outline
 
 
-def keypoints_from_samples(small, pagemask, page_outline, span_points):
+def keypoints_from_samples(pagemask, page_outline, span_points):
     all_evecs = np.array([[0.0, 0.0]])
     all_weights = 0
     for points in span_points:
@@ -180,7 +180,7 @@ def project_keypoints(pvec, keypoint_index):
     return project_xy(xy_coords, pvec)
 
 
-def optimise_params(small, dstpoints, span_counts, params, debug_lvl):
+def optimise_params(dstpoints, span_counts, params):
     keypoint_index = make_keypoint_index(span_counts)
 
     def objective(pvec):
@@ -256,15 +256,9 @@ def get_page_dims(corners, rough_dims, params):
     return dims
 
 
-def main():
-    image = cv2.imread("./really_bad_cropped.png")
-    output_image = image.copy()
-
-    # Convert to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
+def get_horizontal_lines(image):
     # Apply Gaussian blur to reduce noise
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    blurred = cv2.GaussianBlur(image, (5, 5), 0)
 
     # Apply Canny edge detection
     edges = cv2.Canny(blurred, 50, 150)
@@ -283,17 +277,19 @@ def main():
             filtered_lines.append(line)
 
     # Draw filtered lines
-    for i, line in enumerate(filtered_lines):
-        x1, y1, x2, y2 = line[0]
-        cv2.line(
-            output_image, (x1, y1), (x2, y2), (0, 255, 0), 2
-        )  # Green color, line thickness 2
+    # XXX
+    # for line in filtered_lines:
+    #     x1, y1, x2, y2 = line[0]
+    #     cv2.line(
+    #         output_image, (x1, y1), (x2, y2), (0, 255, 0), 2
+    #     )  # Green color, line thickness 2
 
-    # Aggregate all line segments into a single array of points
-    all_points = np.concatenate([line.reshape(-1, 2) for line in filtered_lines])
+    return filtered_lines
 
+
+def derotate(image, horizontal_lines):
     angles, sizes = [], []
-    for line in filtered_lines:
+    for line in horizontal_lines:
         x1, y1, x2, y2 = line[0]
         size = distance.euclidean([x1, y1], [x2, y2])
         angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
@@ -304,28 +300,29 @@ def main():
     print(np.mean(angles))
 
     # Rotate the image
-    rows, cols = image.shape[:2]
     rotated_image = rotate_image(image, average_angle)
+    return rotated_image
 
-    combined = np.hstack((image, rotated_image))
 
-    image = rotated_image  # XXX
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input-image", type=str, required=True)
+    args = parser.parse_args()
+
+    image = cv2.imread(args.input_image)
+
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    horizontal_lines = get_horizontal_lines(gray)
 
     line_thickness = int(image.shape[0] / 200)
     binary_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
-    for line in filtered_lines:
+    for line in horizontal_lines:
         x1, y1, x2, y2 = line[0]
         cv2.line(binary_image, (x1, y1), (x2, y2), 255, line_thickness)
 
-    horizontal_projection = np.sum(binary_image, axis=1)
-    threshold_value = 0.5 * np.max(horizontal_projection)
-    peaks = np.where(horizontal_projection > threshold_value)[0]
-
-    kernel = np.ones((5, 5), np.uint8)  # Adjust kernel size as needed
     smoothed_image = cv2.dilate(binary_image, box(3, 3), iterations=5)
-    # smoothed_image = cv2.erode(smoothed_image, box(5, 5), iterations=1)
-    # smoothed_image = cv2.morphologyEx(binary_image, cv2.MORPH_GRADIENT, kernel, iterations=1)
-    # smoothed_image = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel, iterations=1)
 
     contours, _ = cv2.findContours(
         smoothed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
@@ -333,12 +330,13 @@ def main():
 
     image_with_contours = cv2.cvtColor(smoothed_image, cv2.COLOR_GRAY2BGR)
 
-    min_width = 0.3 * image.shape[0]
     region_points = []
 
-    for contour in contours:
-        x, y, w, h = cv2.boundingRect(contour)
-        if w < min_width:
+    widths = [cv2.boundingRect(contour)[2] for contour in contours]
+    min_width = 0.7 * max(widths)
+
+    for contour, width in zip(contours, widths):
+        if width < min_width:
             continue
 
         # Approximate the contour with a polygon
@@ -358,7 +356,6 @@ def main():
         smoothed_y = np.zeros_like(avg_y)
         smoothed_y[avg_y > 0] = savgol_filter(avg_y[avg_y > 0], 250, 1)  # XXX parameter
         valid_indices = np.where(avg_y > 0)[0]
-        # points = np.array([(index, avg_y[index]) for index in valid_indices]).astype(np.int64)
         points = np.array(
             [(index, smoothed_y[index]) for index in valid_indices]
         ).astype(np.int64)
@@ -373,22 +370,9 @@ def main():
         sampled_points = sampled_points.reshape(-1, 1, 2)
         span_points.append(sampled_points)
 
-    point_image = rotated_image.copy()
-
-    for region in region_points:
-        for point in region:
-            cv2.circle(
-                point_image,
-                (int(point[0]), int(point[1])),
-                radius=20,
-                color=(0, 255, 255),
-                # color=128,
-                thickness=-1,
-            )
-
     pagemask, page_outline = calculate_page_extents(image)
     corners, ycoords, xcoords = keypoints_from_samples(
-        image, pagemask, page_outline, span_points
+        pagemask, page_outline, span_points
     )
 
     rough_dims, span_counts, params = get_default_params(corners, ycoords, xcoords)
@@ -398,9 +382,7 @@ def main():
         + tuple(point.reshape(-1, 1, 2) for point in span_points)
     )
 
-    baseline_img = remap(image, rough_dims, params)
-
-    optimal_params = optimise_params(image, dstpoints, span_counts, params, 1)
+    optimal_params = optimise_params(dstpoints, span_counts, params)
 
     page_dims = get_page_dims(corners, rough_dims, optimal_params)
     print(page_dims)
@@ -428,8 +410,16 @@ def main():
         25,
     )
 
-    cv2.imwrite("alto_original.png", img_binary)
-    cv2.imwrite("alto_remapped.png", img_remapped_binary)
+    horizontal_lines = get_horizontal_lines(img_binary)
+    img_derotated = derotate(img_binary, horizontal_lines)
+
+    original_fpath = "./alto_original.png"
+    output_fpath = "./alto_output.png"
+    derotated_fpath = "./alto_derotated.png"
+    cv2.imwrite(original_fpath, img_binary)
+    cv2.imwrite(output_fpath, img_remapped_binary)
+    cv2.imwrite(derotated_fpath, img_derotated)
+    print(f"saved {original_fpath} and {output_fpath}")
 
 
 if __name__ == "__main__":
