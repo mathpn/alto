@@ -19,6 +19,9 @@ CUBIC_IDX = slice(
 OUTPUT_ZOOM = 1.0
 REMAP_DECIMATE = 16
 ADAPTIVE_WINSZ = 55  # Window size for adaptive threshold in reduced px
+MAX_LINE_ANGLE = 30
+EPSILON_FACTOR = 0.005
+MOV_AVG_WINDOW = 250
 
 
 def rotate_image(image, angle):
@@ -273,7 +276,7 @@ def get_horizontal_lines(image):
         angle = (
             np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
         )  # Calculate angle of the line
-        if np.abs(angle) < 30:  # Adjust the threshold angle as needed
+        if np.abs(angle) < MAX_LINE_ANGLE:  # Adjust the threshold angle as needed
             filtered_lines.append(line)
 
     # Draw filtered lines
@@ -297,7 +300,6 @@ def derotate(image, horizontal_lines):
         sizes.append(size)
 
     average_angle = (np.array(angles) * np.array(sizes)).sum() / np.sum(sizes)
-    print(np.mean(angles))
 
     # Rotate the image
     rotated_image = rotate_image(image, average_angle)
@@ -340,7 +342,7 @@ def main():
             continue
 
         # Approximate the contour with a polygon
-        epsilon = 0.005 * cv2.arcLength(contour, True)  # XXX
+        epsilon = EPSILON_FACTOR * cv2.arcLength(contour, True)  # XXX
         approx = cv2.approxPolyDP(contour, epsilon, True)
         # Draw the simplified contour on the image
         cv2.drawContours(image_with_contours, [approx], -1, (0, 255, 0), thickness=10)
@@ -354,7 +356,7 @@ def main():
         count_y = np.bincount(valid_points[:, 1], minlength=len(sum_y))
         avg_y = sum_y / (count_y + 1e-3)
         smoothed_y = np.zeros_like(avg_y)
-        smoothed_y[avg_y > 0] = savgol_filter(avg_y[avg_y > 0], 250, 1)  # XXX parameter
+        smoothed_y[avg_y > 0] = savgol_filter(avg_y[avg_y > 0], MOV_AVG_WINDOW, 1)
         valid_indices = np.where(avg_y > 0)[0]
         points = np.array(
             [(index, smoothed_y[index]) for index in valid_indices]
