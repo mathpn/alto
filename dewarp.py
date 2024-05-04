@@ -306,17 +306,8 @@ def derotate(image, horizontal_lines):
     return rotated_image
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input-image", type=str, required=True)
-    args = parser.parse_args()
-
-    image = cv2.imread(args.input_image)
-
-    # Convert to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    horizontal_lines = get_horizontal_lines(gray)
+def get_dewarp_params(image):
+    horizontal_lines = get_horizontal_lines(image)
 
     line_thickness = int(image.shape[0] / 200)
     binary_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
@@ -393,7 +384,27 @@ def main():
         print("Got a negative page dimension! Falling back to rough estimate")
         page_dims = rough_dims
 
-    img_remapped = remap(image, rough_dims, optimal_params)
+    return optimal_params, page_dims  # XXX
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input-image", type=str, required=True)
+    args = parser.parse_args()
+
+    image = cv2.imread(args.input_image)
+
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    height, width = gray.shape
+    aspect_ratio = height / width
+    small_width = 1500  # XXX
+    small_height = int(small_width * aspect_ratio)
+    gray_small = cv2.resize(gray, (small_width, small_height))
+
+    params, page_dims = get_dewarp_params(gray_small)
+    img_remapped = remap(image, page_dims, params)
+
     img_remapped_binary = cv2.adaptiveThreshold(
         img_remapped,
         255,
