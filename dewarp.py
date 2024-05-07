@@ -263,7 +263,7 @@ def get_page_dims(corners, rough_dims, params):
     return dims
 
 
-def get_horizontal_lines(image):
+def get_horizontal_lines(image, debug: bool):
     # Apply Gaussian blur to reduce noise
     blurred = cv2.GaussianBlur(image, (5, 5), 0)
 
@@ -277,19 +277,17 @@ def get_horizontal_lines(image):
     filtered_lines = []
     for line in lines:
         x1, y1, x2, y2 = line[0]
-        angle = (
-            np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
-        )  # Calculate angle of the line
-        if np.abs(angle) < MAX_LINE_ANGLE:  # Adjust the threshold angle as needed
+        angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
+        if np.abs(angle) < MAX_LINE_ANGLE:
             filtered_lines.append(line)
 
-    # Draw filtered lines
-    # XXX
-    # for line in filtered_lines:
-    #     x1, y1, x2, y2 = line[0]
-    #     cv2.line(
-    #         output_image, (x1, y1), (x2, y2), (0, 255, 0), 2
-    #     )  # Green color, line thickness 2
+    if debug:
+        debug_image = image.copy()
+        debug_image = cv2.cvtColor(debug_image, cv2.COLOR_GRAY2BGR)
+        for line in filtered_lines:
+            x1, y1, x2, y2 = line[0]
+            cv2.line(debug_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        save_debug_image(debug_image, "02_lines")
 
     return filtered_lines
 
