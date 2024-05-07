@@ -24,6 +24,10 @@ EPSILON_FACTOR = 0.005
 MOV_AVG_WINDOW = 250
 
 
+def save_debug_image(image, stage: str):
+    cv2.imwrite(f"debug_{stage}.png", image)
+
+
 def rotate_image(image, angle):
     image_center = tuple(np.array(image.shape[1::-1]) / 2)
     rot_mat = cv2.getRotationMatrix2D(image_center, angle, 1.0)
@@ -306,22 +310,26 @@ def derotate(image, horizontal_lines):
     return rotated_image
 
 
-def get_dewarp_params(image):
+def get_dewarp_params(image, debug: bool):
     horizontal_lines = get_horizontal_lines(image)
 
     line_thickness = int(image.shape[0] / 200)
-    binary_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+    line_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
     for line in horizontal_lines:
         x1, y1, x2, y2 = line[0]
-        cv2.line(binary_image, (x1, y1), (x2, y2), 255, line_thickness)
+        cv2.line(line_image, (x1, y1), (x2, y2), 255, line_thickness)
+    if debug:
+        save_debug_image(line_image, "02_lines")
 
-    smoothed_image = cv2.dilate(binary_image, box(3, 3), iterations=5)
+    dilated_image = cv2.dilate(line_image, box(3, 3), iterations=5)
+    if debug:
+        save_debug_image(dilated_image, "03_dilated_lines")
 
     contours, _ = cv2.findContours(
-        smoothed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        dilated_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
-    image_with_contours = cv2.cvtColor(smoothed_image, cv2.COLOR_GRAY2BGR)
+    image_with_contours = cv2.cvtColor(dilated_image, cv2.COLOR_GRAY2BGR)
 
     region_points = []
 
@@ -338,7 +346,7 @@ def get_dewarp_params(image):
         # Draw the simplified contour on the image
         cv2.drawContours(image_with_contours, [approx], -1, (0, 255, 0), thickness=10)
 
-        mask = np.zeros_like(binary_image)
+        mask = np.zeros_like(line_image)
         cv2.drawContours(mask, [approx], 0, (255), thickness=cv2.FILLED)
 
         valid_points = np.argwhere(mask == 255)
@@ -355,13 +363,28 @@ def get_dewarp_params(image):
 
         region_points.append(points)
 
+    if debug:
+        save_debug_image(image_with_contours, "04_contours")
+
     span_points = []
+    debug_span_points = []
     for points in region_points:
         sampled_points = points.tolist()[::100]
         sampled_points = np.array(sampled_points)
+        debug_span_points.append(sampled_points)
+
         sampled_points = pix2norm(image.shape, sampled_points)
         sampled_points = sampled_points.reshape(-1, 1, 2)
         span_points.append(sampled_points)
+
+    if debug:
+        point_image = image.copy()
+        point_image = cv2.cvtColor(point_image, cv2.COLOR_GRAY2BGR)
+        for sampled_points in debug_span_points:
+            for point in sampled_points:
+                point = point.ravel().astype(np.uint32)
+                cv2.circle(point_image, point, 6, (0, 0, 255), -1)
+        save_debug_image(point_image, "05_points")
 
     pagemask, page_outline = calculate_page_extents(image)
     corners, ycoords, xcoords = keypoints_from_samples(
@@ -378,23 +401,23 @@ def get_dewarp_params(image):
     optimal_params = optimise_params(dstpoints, span_counts, params)
 
     page_dims = get_page_dims(corners, rough_dims, optimal_params)
-    print(page_dims)
     if np.any(page_dims < 0):
         # Fallback: see https://github.com/lmmx/page-dewarp/issues/9
         print("Got a negative page dimension! Falling back to rough estimate")
         page_dims = rough_dims
+    print(f"Page dimensions: {page_dims}")
 
-    return optimal_params, page_dims  # XXX
+    return optimal_params, page_dims
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-image", type=str, required=True)
+    parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
     image = cv2.imread(args.input_image)
 
-    # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     height, width = gray.shape
     aspect_ratio = height / width
@@ -402,8 +425,13 @@ def main():
     small_height = int(small_width * aspect_ratio)
     gray_small = cv2.resize(gray, (small_width, small_height))
 
-    params, page_dims = get_dewarp_params(gray_small)
+    if args.debug:
+        save_debug_image(gray_small, "01_gray")
+
+    params, page_dims = get_dewarp_params(gray_small, debug=args.debug)
     img_remapped = remap(image, page_dims, params)
+    if args.debug:
+        save_debug_image(img_remapped, "06_remapped")
 
     img_remapped_binary = cv2.adaptiveThreshold(
         img_remapped,
