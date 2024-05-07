@@ -377,7 +377,9 @@ def get_dewarp_params(image, debug: bool):
     span_points = []
     debug_span_points = []
     for points in region_points:
-        sampled_points = points.tolist()[::100]
+        # TODO new parameter?
+        points = points[PAGE_MARGIN_X:-PAGE_MARGIN_X, :].tolist()
+        sampled_points = [points[0], *points[1:-1:100], points[-1]]
         sampled_points = np.array(sampled_points)
         debug_span_points.append(sampled_points)
 
