@@ -321,18 +321,26 @@ def get_dewarp_params(image, debug: bool):
     if debug:
         save_debug_image(line_image, "02_lines")
 
-    dilated_image = cv2.dilate(line_image, box(3, 3), iterations=5)
+    morph_image = line_image.copy()
+
+    morph_image = cv2.morphologyEx(morph_image, cv2.MORPH_CLOSE, box(10, 2), iterations=3)
     if debug:
-        save_debug_image(dilated_image, "03_dilated_lines")
+        save_debug_image(morph_image, "03_morphology_1")
+
+    morph_image = cv2.erode(morph_image, box(2, 10), iterations=1)
+    if debug:
+        save_debug_image(morph_image, "03_morphology_2")
+    morph_image = cv2.dilate(morph_image, box(10, 2), iterations=1)
+    if debug:
+        save_debug_image(morph_image, "03_morphology_3")
 
     contours, _ = cv2.findContours(
-        dilated_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        morph_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
-    image_with_contours = cv2.cvtColor(dilated_image, cv2.COLOR_GRAY2BGR)
+    image_with_contours = cv2.cvtColor(morph_image, cv2.COLOR_GRAY2BGR)
 
     region_points = []
-
     widths = [cv2.boundingRect(contour)[2] for contour in contours]
     min_width = 0.7 * max(widths)
 
