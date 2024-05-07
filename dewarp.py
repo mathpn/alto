@@ -309,7 +309,7 @@ def derotate(image, horizontal_lines):
 
 
 def get_dewarp_params(image, debug: bool):
-    horizontal_lines = get_horizontal_lines(image)
+    horizontal_lines = get_horizontal_lines(image, debug)
 
     line_thickness = int(image.shape[0] / 200)
     line_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
@@ -317,20 +317,22 @@ def get_dewarp_params(image, debug: bool):
         x1, y1, x2, y2 = line[0]
         cv2.line(line_image, (x1, y1), (x2, y2), 255, line_thickness)
     if debug:
-        save_debug_image(line_image, "02_lines")
+        save_debug_image(line_image, "03_binary_lines")
 
     morph_image = line_image.copy()
 
-    morph_image = cv2.morphologyEx(morph_image, cv2.MORPH_CLOSE, box(10, 2), iterations=3)
+    morph_image = cv2.morphologyEx(
+        morph_image, cv2.MORPH_CLOSE, box(10, 2), iterations=3
+    )
     if debug:
-        save_debug_image(morph_image, "03_morphology_1")
+        save_debug_image(morph_image, "04_morphology_1")
 
     morph_image = cv2.erode(morph_image, box(2, 10), iterations=1)
     if debug:
-        save_debug_image(morph_image, "03_morphology_2")
+        save_debug_image(morph_image, "04_morphology_2")
     morph_image = cv2.dilate(morph_image, box(10, 2), iterations=1)
     if debug:
-        save_debug_image(morph_image, "03_morphology_3")
+        save_debug_image(morph_image, "04_morphology_3")
 
     contours, _ = cv2.findContours(
         morph_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
@@ -370,7 +372,7 @@ def get_dewarp_params(image, debug: bool):
         region_points.append(points)
 
     if debug:
-        save_debug_image(image_with_contours, "04_contours")
+        save_debug_image(image_with_contours, "05_contours")
 
     span_points = []
     debug_span_points = []
@@ -390,7 +392,7 @@ def get_dewarp_params(image, debug: bool):
             for point in sampled_points:
                 point = point.ravel().astype(np.uint32)
                 cv2.circle(point_image, point, 6, (0, 0, 255), -1)
-        save_debug_image(point_image, "05_points")
+        save_debug_image(point_image, "06_points")
 
     pagemask, page_outline = calculate_page_extents(image)
     corners, ycoords, xcoords = keypoints_from_samples(
@@ -437,7 +439,7 @@ def main():
     params, page_dims = get_dewarp_params(gray_small, debug=args.debug)
     img_remapped = remap(image, page_dims, params)
     if args.debug:
-        save_debug_image(img_remapped, "06_remapped")
+        save_debug_image(img_remapped, "07_remapped")
 
     img_remapped_binary = cv2.adaptiveThreshold(
         img_remapped,
@@ -457,7 +459,7 @@ def main():
         25,
     )
 
-    horizontal_lines = get_horizontal_lines(img_binary)
+    horizontal_lines = get_horizontal_lines(img_binary, args.debug)
     img_derotated = derotate(img_binary, horizontal_lines)
 
     original_fpath = "./alto_original.png"
