@@ -18,7 +18,7 @@ CUBIC_IDX = slice(6, 8)
 PAGE_MARGIN_Y = 50
 PAGE_MARGIN_X = 50
 FOCAL_LENGTH = 1.8
-OUTPUT_ZOOM = 1.0
+OUTPUT_RESCALE = 1.0
 REMAP_DECIMATE = 16
 ADAPTIVE_WINSZ = 55  # Window size for adaptive threshold in reduced px
 MAX_LINE_ANGLE = 30
@@ -31,7 +31,7 @@ class Config:
     page_margin_y: int = PAGE_MARGIN_Y
     page_margin_x: int = PAGE_MARGIN_X
     focal_length: float = FOCAL_LENGTH
-    output_zoom: float = OUTPUT_ZOOM
+    output_rescale: float = OUTPUT_RESCALE
     remap_decimate: int = REMAP_DECIMATE
     adaptive_winsz: int = ADAPTIVE_WINSZ
     max_line_angle: int = MAX_LINE_ANGLE
@@ -229,7 +229,7 @@ def round_nearest_multiple(i, factor):
 
 
 def remap(img, page_dims, params, config: Config):
-    height = 0.5 * page_dims[1] * config.output_zoom * img.shape[0]
+    height = 0.5 * page_dims[1] * config.output_rescale * img.shape[0]
     height = round_nearest_multiple(height, config.remap_decimate)
     width = round_nearest_multiple(
         height * page_dims[0] / page_dims[1], config.remap_decimate
@@ -437,26 +437,72 @@ def get_dewarp_params(image, config: Config, debug: bool):
 
 
 def main():
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter())
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument("--input-image", type=str, required=True)
     parser.add_argument("--debug", action="store_true")
-    # TODO add help
-    parser.add_argument("--page-margin-x", type=int, default=PAGE_MARGIN_X)
-    parser.add_argument("--page-margin-y", type=int, default=PAGE_MARGIN_Y)
-    parser.add_argument("--focal-length", type=float, default=FOCAL_LENGTH)
-    parser.add_argument("--output-zoom", type=float, default=OUTPUT_ZOOM)
-    parser.add_argument("--remap-decimate", type=int, default=REMAP_DECIMATE)
-    parser.add_argument("--adaptive-winsz", type=int, default=ADAPTIVE_WINSZ)
-    parser.add_argument("--max-line-angle", type=int, default=MAX_LINE_ANGLE)
-    parser.add_argument("--epsilon-factor", type=float, default=EPSILON_FACTOR)
-    parser.add_argument("--mov-avg-window", type=int, default=MOV_AVG_WINDOW)
+    parser.add_argument(
+        "--page-margin-x",
+        type=int,
+        default=PAGE_MARGIN_X,
+        help="Reduced px to ignore near L/R edge",
+    )
+    parser.add_argument(
+        "--page-margin-y",
+        type=int,
+        default=PAGE_MARGIN_Y,
+        help="Reduced px to ignore near T/B edge",
+    )
+    parser.add_argument(
+        "--focal-length",
+        type=float,
+        default=FOCAL_LENGTH,
+        help="Normalized focal length of camera",
+    )
+    parser.add_argument(
+        "--output-rescale",
+        type=float,
+        default=OUTPUT_RESCALE,
+        help="How much to rescale output relative to original image",
+    )
+    parser.add_argument(
+        "--remap-decimate",
+        type=int,
+        default=REMAP_DECIMATE,
+        help="Downscaling factor for remapping image",
+    )
+    parser.add_argument(
+        "--adaptive-winsz",
+        type=int,
+        default=ADAPTIVE_WINSZ,
+        help="Window size for adaptive threshold in reduced px",
+    )
+    parser.add_argument(
+        "--max-line-angle",
+        type=int,
+        default=MAX_LINE_ANGLE,
+        help="Maximum allowed angle for approximately horizontal lines",
+    )
+    parser.add_argument(
+        "--epsilon-factor",
+        type=float,
+        default=EPSILON_FACTOR,
+        help="Polygon approximation accuracy. Higher values lead to stronger smoothing",
+    )
+    parser.add_argument(
+        "--mov-avg-window",
+        type=int,
+        default=MOV_AVG_WINDOW,
+        help="Window size of moving average filter applied to region height",
+    )
     args = parser.parse_args()
 
     config = Config(
         page_margin_x=args.page_margin_x,
         page_margin_y=args.page_margin_y,
         focal_length=args.focal_length,
-        output_zoom=args.output_zoom,
+        output_rescale=args.output_rescale,
         remap_decimate=args.remap_decimate,
         adaptive_winsz=args.adaptive_winsz,
         max_line_angle=args.max_line_angle,
