@@ -1,5 +1,6 @@
 import argparse
-from datetime import datetime as dt
+from dataclasses import dataclass
+from datetime import datetime
 
 import cv2
 import numpy as np
@@ -7,21 +8,35 @@ from scipy.optimize import minimize
 from scipy.signal import savgol_filter
 from scipy.spatial import distance
 
+# Index of rvec in params vector (slice: pair of values)
+RVEC_IDX = slice(0, 3)
+# Index of tvec in params vector (slice: pair of values)
+TVEC_IDX = slice(3, 6)
+# Index of cubic slopes in params vector (slice: pair of values)
+CUBIC_IDX = slice(6, 8)
+
 PAGE_MARGIN_Y = 50
 PAGE_MARGIN_X = 50
 FOCAL_LENGTH = 1.8
-RVEC_IDX = slice(0, 3)  # Index of rvec in params vector (slice: pair of values)
-TVEC_IDX = slice(3, 6)  # Index of tvec in params vector (slice: pair of values)
-CUBIC_IDX = slice(
-    6, 8
-)  # Index of cubic slopes in params vector (slice: pair of values)
-
 OUTPUT_ZOOM = 1.0
 REMAP_DECIMATE = 16
 ADAPTIVE_WINSZ = 55  # Window size for adaptive threshold in reduced px
 MAX_LINE_ANGLE = 30
 EPSILON_FACTOR = 0.005
 MOV_AVG_WINDOW = 250
+
+
+@dataclass
+class Config:
+    page_margin_y: int = PAGE_MARGIN_Y
+    page_margin_x: int = PAGE_MARGIN_X
+    focal_length: float = FOCAL_LENGTH
+    output_zoom: float = OUTPUT_ZOOM
+    remap_decimate: int = REMAP_DECIMATE
+    adaptive_winsz: int = ADAPTIVE_WINSZ
+    max_line_angle: int = MAX_LINE_ANGLE
+    epsilon_factor: int = EPSILON_FACTOR
+    mov_avg_window: int = MOV_AVG_WINDOW
 
 
 def save_debug_image(image, stage: str):
@@ -61,10 +76,10 @@ def norm2pix(shape, pts, as_integer):
     return (rval + 0.5).astype(int) if as_integer else rval
 
 
-def calculate_page_extents(image):
+def calculate_page_extents(image, config: Config):
     height, width = image.shape[:2]
-    xmin = PAGE_MARGIN_X
-    ymin = PAGE_MARGIN_Y
+    xmin = config.page_margin_x
+    ymin = config.page_margin_y
     xmax, ymax = (width - xmin), (height - ymin)
     pagemask = np.zeros((height, width), dtype=np.uint8)
     cv2.rectangle(pagemask, (xmin, ymin), (xmax, ymax), color=255, thickness=-1)
@@ -107,18 +122,18 @@ def keypoints_from_samples(pagemask, page_outline, span_points):
     return corners, np.array(ycoords), xcoords
 
 
-def K():
+def K(focal_length: float):
     return np.array(
         [
-            [FOCAL_LENGTH, 0, 0],
-            [0, FOCAL_LENGTH, 0],
+            [focal_length, 0, 0],
+            [0, focal_length, 0],
             [0, 0, 1],
         ],
         dtype=np.float32,
     )
 
 
-def get_default_params(corners, ycoords, xcoords):
+def get_default_params(corners, ycoords, xcoords, config: Config):
     page_width, page_height = [np.linalg.norm(corners[i] - corners[0]) for i in (1, -1)]
     cubic_slopes = [0.0, 0.0]  # initial guess for the cubic has no slope
     # object points of flat page in 3D coordinates
@@ -131,7 +146,9 @@ def get_default_params(corners, ycoords, xcoords):
         ]
     )
     # estimate rotation and translation from four 2D-to-3D point correspondences
-    _, rvec, tvec = cv2.solvePnP(corners_object3d, corners, K(), np.zeros(5))
+    _, rvec, tvec = cv2.solvePnP(
+        corners_object3d, corners, K(config.focal_length), np.zeros(5)
+    )
     span_counts = [*map(len, xcoords)]
     params = np.hstack(
         (
@@ -157,7 +174,7 @@ def make_keypoint_index(span_counts):
     return keypoint_index
 
 
-def project_xy(xy_coords, pvec):
+def project_xy(xy_coords, pvec, config: Config):
     """
     Get cubic polynomial coefficients given by:
 
@@ -175,30 +192,30 @@ def project_xy(xy_coords, pvec):
         objpoints,
         pvec[RVEC_IDX],
         pvec[TVEC_IDX],
-        K(),
+        K(config.focal_length),
         np.zeros(5),
     )
     return image_points
 
 
-def project_keypoints(pvec, keypoint_index):
+def project_keypoints(pvec, keypoint_index, config: Config):
     xy_coords = pvec[keypoint_index]
     xy_coords[0, :] = 0
-    return project_xy(xy_coords, pvec)
+    return project_xy(xy_coords, pvec, config)
 
 
-def optimise_params(dstpoints, span_counts, params):
+def optimise_params(dstpoints, span_counts, params, config: Config):
     keypoint_index = make_keypoint_index(span_counts)
 
     def objective(pvec):
-        ppts = project_keypoints(pvec, keypoint_index)
+        ppts = project_keypoints(pvec, keypoint_index, config)
         return np.sum((dstpoints - ppts) ** 2)
 
     print("  initial objective is", objective(params))
     print("  optimizing", len(params), "parameters...")
-    start = dt.now()
+    start = datetime.now()
     res = minimize(objective, params, method="Powell")
-    end = dt.now()
+    end = datetime.now()
     print(f"  optimization took {round((end - start).total_seconds(), 2)} sec.")
     print(f"  final objective is {res.fun}")
     params = res.x
@@ -211,12 +228,14 @@ def round_nearest_multiple(i, factor):
     return i + factor - rem if rem else i
 
 
-def remap(img, page_dims, params):
-    height = 0.5 * page_dims[1] * OUTPUT_ZOOM * img.shape[0]
-    height = round_nearest_multiple(height, REMAP_DECIMATE)
-    width = round_nearest_multiple(height * page_dims[0] / page_dims[1], REMAP_DECIMATE)
+def remap(img, page_dims, params, config: Config):
+    height = 0.5 * page_dims[1] * config.output_zoom * img.shape[0]
+    height = round_nearest_multiple(height, config.remap_decimate)
+    width = round_nearest_multiple(
+        height * page_dims[0] / page_dims[1], config.remap_decimate
+    )
     print("  output will be {}x{}".format(width, height))
-    height_small, width_small = np.floor_divide([height, width], REMAP_DECIMATE)
+    height_small, width_small = np.floor_divide([height, width], config.remap_decimate)
     page_x_range = np.linspace(0, page_dims[0], width_small)
     page_y_range = np.linspace(0, page_dims[1], height_small)
     page_x_coords, page_y_coords = np.meshgrid(page_x_range, page_y_range)
@@ -227,7 +246,7 @@ def remap(img, page_dims, params):
         )
     )
     page_xy_coords = page_xy_coords.astype(np.float32)
-    image_points = project_xy(page_xy_coords, params)
+    image_points = project_xy(page_xy_coords, params, config)
     image_points = norm2pix(img.shape, image_points, False)
     image_x_coords = image_points[:, 0, 0].reshape(page_x_coords.shape)
     image_y_coords = image_points[:, 0, 1].reshape(page_y_coords.shape)
@@ -249,12 +268,12 @@ def remap(img, page_dims, params):
     return remapped
 
 
-def get_page_dims(corners, rough_dims, params):
+def get_page_dims(corners, rough_dims, params, config):
     dst_br = corners[2].flatten()
     dims = np.array(rough_dims)
 
     def objective(dims):
-        proj_br = project_xy(dims, params)
+        proj_br = project_xy(dims, params, config)
         return np.sum((dst_br - proj_br.flatten()) ** 2)
 
     res = minimize(objective, dims, method="Powell")
@@ -263,22 +282,16 @@ def get_page_dims(corners, rough_dims, params):
     return dims
 
 
-def get_horizontal_lines(image, debug: bool):
-    # Apply Gaussian blur to reduce noise
+def get_horizontal_lines(image, config: Config, debug: bool):
     blurred = cv2.GaussianBlur(image, (5, 5), 0)
-
-    # Apply Canny edge detection
     edges = cv2.Canny(blurred, 50, 150)
-
-    # Perform line detection using Hough transform
     lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 20, minLineLength=20, maxLineGap=10)
 
-    # Filter lines based on their orientation
     filtered_lines = []
     for line in lines:
         x1, y1, x2, y2 = line[0]
         angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
-        if np.abs(angle) < MAX_LINE_ANGLE:
+        if np.abs(angle) < config.max_line_angle:
             filtered_lines.append(line)
 
     if debug:
@@ -303,13 +316,12 @@ def derotate(image, horizontal_lines):
 
     average_angle = (np.array(angles) * np.array(sizes)).sum() / np.sum(sizes)
 
-    # Rotate the image
     rotated_image = rotate_image(image, average_angle)
     return rotated_image
 
 
-def get_dewarp_params(image, debug: bool):
-    horizontal_lines = get_horizontal_lines(image, debug)
+def get_dewarp_params(image, config: Config, debug: bool):
+    horizontal_lines = get_horizontal_lines(image, config, debug)
 
     line_thickness = int(image.shape[0] / 200)
     line_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
@@ -349,7 +361,7 @@ def get_dewarp_params(image, debug: bool):
             continue
 
         # Approximate the contour with a polygon
-        epsilon = EPSILON_FACTOR * cv2.arcLength(contour, True)  # XXX
+        epsilon = config.epsilon_factor * cv2.arcLength(contour, True)
         approx = cv2.approxPolyDP(contour, epsilon, True)
         # Draw the simplified contour on the image
         cv2.drawContours(image_with_contours, [approx], -1, (0, 255, 0), thickness=10)
@@ -363,7 +375,9 @@ def get_dewarp_params(image, debug: bool):
         count_y = np.bincount(valid_points[:, 1], minlength=len(sum_y))
         avg_y = sum_y / (count_y + 1e-3)
         smoothed_y = np.zeros_like(avg_y)
-        smoothed_y[avg_y > 0] = savgol_filter(avg_y[avg_y > 0], MOV_AVG_WINDOW, 1)
+        smoothed_y[avg_y > 0] = savgol_filter(
+            avg_y[avg_y > 0], config.mov_avg_window, 1
+        )
         valid_indices = np.where(avg_y > 0)[0]
         points = np.array(
             [(index, smoothed_y[index]) for index in valid_indices]
@@ -378,7 +392,7 @@ def get_dewarp_params(image, debug: bool):
     debug_span_points = []
     for points in region_points:
         # TODO new parameter?
-        points = points[PAGE_MARGIN_X:-PAGE_MARGIN_X, :].tolist()
+        points = points[config.page_margin_x : -config.page_margin_y, :].tolist()
         sampled_points = [points[0], *points[1:-1:100], points[-1]]
         sampled_points = np.array(sampled_points)
         debug_span_points.append(sampled_points)
@@ -396,21 +410,23 @@ def get_dewarp_params(image, debug: bool):
                 cv2.circle(point_image, point, 6, (0, 0, 255), -1)
         save_debug_image(point_image, "06_points")
 
-    pagemask, page_outline = calculate_page_extents(image)
+    pagemask, page_outline = calculate_page_extents(image, config)
     corners, ycoords, xcoords = keypoints_from_samples(
         pagemask, page_outline, span_points
     )
 
-    rough_dims, span_counts, params = get_default_params(corners, ycoords, xcoords)
+    rough_dims, span_counts, params = get_default_params(
+        corners, ycoords, xcoords, config
+    )
 
     dstpoints = np.vstack(
         (corners[0].reshape(1, 1, 2),)
         + tuple(point.reshape(-1, 1, 2) for point in span_points)
     )
 
-    optimal_params = optimise_params(dstpoints, span_counts, params)
+    optimal_params = optimise_params(dstpoints, span_counts, params, config)
 
-    page_dims = get_page_dims(corners, rough_dims, optimal_params)
+    page_dims = get_page_dims(corners, rough_dims, optimal_params, config)
     if np.any(page_dims < 0):
         # Fallback: see https://github.com/lmmx/page-dewarp/issues/9
         print("Got a negative page dimension! Falling back to rough estimate")
@@ -421,10 +437,32 @@ def get_dewarp_params(image, debug: bool):
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter())
     parser.add_argument("--input-image", type=str, required=True)
     parser.add_argument("--debug", action="store_true")
+    # TODO add help
+    parser.add_argument("--page-margin-x", type=int, default=PAGE_MARGIN_X)
+    parser.add_argument("--page-margin-y", type=int, default=PAGE_MARGIN_Y)
+    parser.add_argument("--focal-length", type=float, default=FOCAL_LENGTH)
+    parser.add_argument("--output-zoom", type=float, default=OUTPUT_ZOOM)
+    parser.add_argument("--remap-decimate", type=int, default=REMAP_DECIMATE)
+    parser.add_argument("--adaptive-winsz", type=int, default=ADAPTIVE_WINSZ)
+    parser.add_argument("--max-line-angle", type=int, default=MAX_LINE_ANGLE)
+    parser.add_argument("--epsilon-factor", type=float, default=EPSILON_FACTOR)
+    parser.add_argument("--mov-avg-window", type=int, default=MOV_AVG_WINDOW)
     args = parser.parse_args()
+
+    config = Config(
+        page_margin_x=args.page_margin_x,
+        page_margin_y=args.page_margin_y,
+        focal_length=args.focal_length,
+        output_zoom=args.output_zoom,
+        remap_decimate=args.remap_decimate,
+        adaptive_winsz=args.adaptive_winsz,
+        max_line_angle=args.max_line_angle,
+        epsilon_factor=args.epsilon_factor,
+        mov_avg_window=args.mov_avg_window,
+    )
 
     image = cv2.imread(args.input_image)
 
@@ -438,8 +476,8 @@ def main():
     if args.debug:
         save_debug_image(gray_small, "01_gray")
 
-    params, page_dims = get_dewarp_params(gray_small, debug=args.debug)
-    img_remapped = remap(image, page_dims, params)
+    params, page_dims = get_dewarp_params(gray_small, config, debug=args.debug)
+    img_remapped = remap(image, page_dims, params, config)
     if args.debug:
         save_debug_image(img_remapped, "07_remapped")
 
@@ -448,7 +486,7 @@ def main():
         255,
         cv2.ADAPTIVE_THRESH_MEAN_C,
         cv2.THRESH_BINARY,
-        ADAPTIVE_WINSZ,
+        config.adaptive_winsz,
         25,
     )
 
@@ -457,11 +495,11 @@ def main():
         255,
         cv2.ADAPTIVE_THRESH_MEAN_C,
         cv2.THRESH_BINARY,
-        ADAPTIVE_WINSZ,
+        config.adaptive_winsz,
         25,
     )
 
-    horizontal_lines = get_horizontal_lines(img_binary, args.debug)
+    horizontal_lines = get_horizontal_lines(img_binary, config, args.debug)
     img_derotated = derotate(img_binary, horizontal_lines)
 
     original_fpath = "./alto_original.png"
