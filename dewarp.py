@@ -20,7 +20,7 @@ PAGE_MARGIN_X = 50
 FOCAL_LENGTH = 1.8
 OUTPUT_RESCALE = 1.0
 REMAP_DECIMATE = 16
-ADAPTIVE_WINSZ = 55  # Window size for adaptive threshold in reduced px
+ADAPTIVE_WINSZ = 55
 MAX_LINE_ANGLE = 30
 EPSILON_FACTOR = 0.005
 MOV_AVG_WINDOW = 250
@@ -211,13 +211,13 @@ def optimise_params(dstpoints, span_counts, params, config: Config):
         ppts = project_keypoints(pvec, keypoint_index, config)
         return np.sum((dstpoints - ppts) ** 2)
 
-    print("  initial objective is", objective(params))
-    print("  optimizing", len(params), "parameters...")
+    print(f"  initial objective is {objective(params):.4f}")
+    print(f"  optimizing {len(params)} parameters...")
     start = datetime.now()
     res = minimize(objective, params, method="Powell")
     end = datetime.now()
     print(f"  optimization took {round((end - start).total_seconds(), 2)} sec.")
-    print(f"  final objective is {res.fun}")
+    print(f"  final objective is {res.fun:.4f}")
     params = res.x
     return params
 
@@ -234,7 +234,7 @@ def remap(img, page_dims, params, config: Config):
     width = round_nearest_multiple(
         height * page_dims[0] / page_dims[1], config.remap_decimate
     )
-    print("  output will be {}x{}".format(width, height))
+    print(f"  output will be {width}x{height}")
     height_small, width_small = np.floor_divide([height, width], config.remap_decimate)
     page_x_range = np.linspace(0, page_dims[0], width_small)
     page_y_range = np.linspace(0, page_dims[1], height_small)
@@ -278,7 +278,7 @@ def get_page_dims(corners, rough_dims, params, config):
 
     res = minimize(objective, dims, method="Powell")
     dims = res.x
-    print("  got page dims", dims[0], "x", dims[1])
+    print(f"  got page dims {dims[0]:.2f} x {dims[1]:.2f}")
     return dims
 
 
