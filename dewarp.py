@@ -24,6 +24,8 @@ ADAPTIVE_WINSZ = 55
 MAX_LINE_ANGLE = 30
 EPSILON_FACTOR = 0.005
 MOV_AVG_WINDOW = 250
+MIN_RELATIVE_WIDTH = 0.7
+MAX_RELATIVE_HEIGHT = 1.5
 
 
 @dataclass
@@ -37,6 +39,8 @@ class Config:
     max_line_angle: int = MAX_LINE_ANGLE
     epsilon_factor: float = EPSILON_FACTOR
     mov_avg_window: int = MOV_AVG_WINDOW
+    min_relative_width: float = MIN_RELATIVE_WIDTH
+    max_relative_height: float = MAX_RELATIVE_HEIGHT
 
 
 def save_debug_image(image, stage: str):
@@ -353,11 +357,20 @@ def get_dewarp_params(image, config: Config, debug: bool):
     image_with_contours = cv2.cvtColor(morph_image, cv2.COLOR_GRAY2BGR)
 
     region_points = []
-    widths = [cv2.boundingRect(contour)[2] for contour in contours]
-    min_width = 0.7 * max(widths)
+    _, _, widths, heights = zip(*[cv2.boundingRect(contour) for contour in contours])
 
-    for contour, width in zip(contours, widths):
+    filtered_contours = []
+    min_width = config.min_relative_width * max(widths)
+    for contour, width, height in zip(contours, widths, heights):
         if width < min_width:
+            continue
+        filtered_contours.append((contour, height))
+
+    median_height = np.median([height for (_, height) in filtered_contours])
+    max_height = config.max_relative_height * median_height
+
+    for contour, height in filtered_contours:
+        if height > max_height:
             continue
 
         # Approximate the contour with a polygon
@@ -496,6 +509,18 @@ def main():
         default=MOV_AVG_WINDOW,
         help="Window size of moving average filter applied to region height",
     )
+    parser.add_argument(
+        "--min-relative-width",
+        type=float,
+        default=MIN_RELATIVE_WIDTH,
+        help="Minimum width relative to maximum width for a region to be considered",
+    )
+    parser.add_argument(
+        "--max-relative-height",
+        type=float,
+        default=MAX_RELATIVE_HEIGHT,
+        help="Maximum height relative to median height for a region to be considered",
+    )
     args = parser.parse_args()
 
     config = Config(
@@ -508,6 +533,8 @@ def main():
         max_line_angle=args.max_line_angle,
         epsilon_factor=args.epsilon_factor,
         mov_avg_window=args.mov_avg_window,
+        min_relative_width=args.min_relative_width,
+        max_relative_height=args.max_relative_height,
     )
 
     dewarped_img = dewarp(args.input_image, config, args.debug)
@@ -552,9 +579,6 @@ def dewarp(input_image: str, config: Config, debug: bool):
         config.adaptive_winsz,
         25,
     )
-
-    horizontal_lines = get_horizontal_lines(img_binary, config, debug)
-    img_derotated = derotate(img_binary, horizontal_lines)
 
     if debug:
         save_debug_image(img_binary, "08_binary")
