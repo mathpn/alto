@@ -47,20 +47,6 @@ def save_debug_image(image, stage: str):
     cv2.imwrite(f"debug_{stage}.png", image)
 
 
-def rotate_image(image, angle):
-    image_center = tuple(np.array(image.shape[1::-1]) / 2)
-    rot_mat = cv2.getRotationMatrix2D(image_center, angle, 1.0)
-    result = cv2.warpAffine(
-        image,
-        rot_mat,
-        image.shape[1::-1],
-        flags=cv2.INTER_CUBIC,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=(255, 255, 255),
-    )
-    return result
-
-
 def box(width, height):
     return np.ones((height, width), dtype=np.uint8)
 
@@ -290,7 +276,7 @@ def get_page_dims(corners, rough_dims, params, config):
     return dims
 
 
-def get_horizontal_lines(image, config: Config, debug: bool):
+def get_horizontal_lines(image, max_line_angle: int, debug: bool):
     blurred = cv2.GaussianBlur(image, (5, 5), 0)
     edges = cv2.Canny(blurred, 50, 150)
     lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 20, minLineLength=20, maxLineGap=10)
@@ -299,7 +285,7 @@ def get_horizontal_lines(image, config: Config, debug: bool):
     for line in lines:
         x1, y1, x2, y2 = line[0]
         angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
-        if np.abs(angle) < config.max_line_angle:
+        if np.abs(angle) < max_line_angle:
             filtered_lines.append(line)
 
     if debug:
@@ -313,23 +299,8 @@ def get_horizontal_lines(image, config: Config, debug: bool):
     return filtered_lines
 
 
-def derotate(image, horizontal_lines):
-    angles, sizes = [], []
-    for line in horizontal_lines:
-        x1, y1, x2, y2 = line[0]
-        size = distance.euclidean([x1, y1], [x2, y2])
-        angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
-        angles.append(angle)
-        sizes.append(size)
-
-    average_angle = (np.array(angles) * np.array(sizes)).sum() / np.sum(sizes)
-
-    rotated_image = rotate_image(image, average_angle)
-    return rotated_image
-
-
 def get_dewarp_params(image, config: Config, debug: bool):
-    horizontal_lines = get_horizontal_lines(image, config, debug)
+    horizontal_lines = get_horizontal_lines(image, config.max_line_angle, debug)
 
     line_thickness = int(image.shape[0] / 200)
     line_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
@@ -453,6 +424,51 @@ def get_dewarp_params(image, config: Config, debug: bool):
     return optimal_params, page_dims
 
 
+def dewarp(input_image: str, config: Config, debug: bool):
+    image = cv2.imread(input_image)
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    height, width = gray.shape
+    aspect_ratio = height / width
+    small_width = 1500  # XXX
+    small_height = int(small_width * aspect_ratio)
+    gray_small = cv2.resize(gray, (small_width, small_height))
+
+    if debug:
+        save_debug_image(gray_small, "01_gray")
+
+    gray_small_b = cv2.copyMakeBorder(
+        gray_small, 150, 150, 150, 150, cv2.BORDER_CONSTANT, None, 255
+    )
+    params, page_dims = get_dewarp_params(gray_small_b, config, debug=debug)
+    img_remapped = remap(image, page_dims, params, config)
+    if debug:
+        save_debug_image(img_remapped, "07_remapped")
+
+    img_remapped_binary = cv2.adaptiveThreshold(
+        img_remapped,
+        255,
+        cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY,
+        config.adaptive_winsz,
+        25,
+    )
+
+    img_binary = cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY,
+        config.adaptive_winsz,
+        25,
+    )
+
+    if debug:
+        save_debug_image(img_binary, "08_binary")
+
+    return img_remapped_binary
+
+
 def main():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
@@ -543,51 +559,9 @@ def main():
 
     dewarped_img = dewarp(args.input_image, config, args.debug)
 
-    output_fpath = "./alto_output.png"
+    output_fpath = "./dewarp_output.png"
     cv2.imwrite(output_fpath, dewarped_img)
     print(f"saved dewarped image to {output_fpath}")
-
-
-def dewarp(input_image: str, config: Config, debug: bool):
-    image = cv2.imread(input_image)
-
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    height, width = gray.shape
-    aspect_ratio = height / width
-    small_width = 1500  # XXX
-    small_height = int(small_width * aspect_ratio)
-    gray_small = cv2.resize(gray, (small_width, small_height))
-
-    if debug:
-        save_debug_image(gray_small, "01_gray")
-
-    params, page_dims = get_dewarp_params(gray_small, config, debug=debug)
-    img_remapped = remap(image, page_dims, params, config)
-    if debug:
-        save_debug_image(img_remapped, "07_remapped")
-
-    img_remapped_binary = cv2.adaptiveThreshold(
-        img_remapped,
-        255,
-        cv2.ADAPTIVE_THRESH_MEAN_C,
-        cv2.THRESH_BINARY,
-        config.adaptive_winsz,
-        25,
-    )
-
-    img_binary = cv2.adaptiveThreshold(
-        gray,
-        255,
-        cv2.ADAPTIVE_THRESH_MEAN_C,
-        cv2.THRESH_BINARY,
-        config.adaptive_winsz,
-        25,
-    )
-
-    if debug:
-        save_debug_image(img_binary, "08_binary")
-
-    return img_remapped_binary
 
 
 if __name__ == "__main__":
