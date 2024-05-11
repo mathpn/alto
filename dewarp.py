@@ -35,7 +35,7 @@ class Config:
     remap_decimate: int = REMAP_DECIMATE
     adaptive_winsz: int = ADAPTIVE_WINSZ
     max_line_angle: int = MAX_LINE_ANGLE
-    epsilon_factor: int = EPSILON_FACTOR
+    epsilon_factor: float = EPSILON_FACTOR
     mov_avg_window: int = MOV_AVG_WINDOW
 
 
