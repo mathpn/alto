@@ -170,12 +170,14 @@ def make_keypoint_index(span_counts):
     nspans, npts = len(span_counts), sum(span_counts)
     keypoint_index = np.zeros((npts + 1, 2), dtype=int)
     start = 1
+    horizontal_boundaries = np.zeros((nspans, 2), dtype=int)
     for i, count in enumerate(span_counts):
         end = start + count
+        horizontal_boundaries[i, :] = [start, end - 1]
         keypoint_index[start : start + end, 1] = 8 + i
         start = end
     keypoint_index[1:, 0] = np.arange(npts) + 8 + nspans
-    return keypoint_index
+    return keypoint_index, horizontal_boundaries
 
 
 def project_xy(xy_coords, pvec, config: Config):
@@ -209,11 +211,13 @@ def project_keypoints(pvec, keypoint_index, config: Config):
 
 
 def optimise_params(dstpoints, span_counts, params, config: Config):
-    keypoint_index = make_keypoint_index(span_counts)
+    keypoint_index, horizontal_boundaries = make_keypoint_index(span_counts)
 
     def objective(pvec):
         ppts = project_keypoints(pvec, keypoint_index, config)
-        return np.sum((dstpoints - ppts) ** 2)
+        h_limits = ppts[horizontal_boundaries].squeeze(2)
+        valign = np.sum((h_limits[:, 0, 1] - h_limits[:, 1, 1]) ** 2)
+        return np.sum((dstpoints - ppts) ** 2) + valign
 
     print(f"  initial objective is {objective(params):.4f}")
     print(f"  optimizing {len(params)} parameters...")
