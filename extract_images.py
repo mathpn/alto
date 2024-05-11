@@ -47,7 +47,6 @@ def extract_pdf_images(
     pdf_file: str,
     output_dir: str,
     min_size: int = 100,
-    min_aspect_ratio: float = 0.05,
     min_byte_size: int = 2048,
 ):
     if not os.path.exists(output_dir):
@@ -57,6 +56,7 @@ def extract_pdf_images(
     page_count = doc.page_count
 
     xreflist = []
+    img_files = []
     for pno in range(page_count):
         print(f"-> extracting images from page {pno+1}/{page_count}...")
         il = doc.get_page_images(pno)
@@ -69,16 +69,16 @@ def extract_pdf_images(
             if min(width, height) <= min_size:
                 continue
             image = recoverpix(doc, img)
-            n = image["colorspace"]
             imgdata = image["image"]
 
             if len(imgdata) <= min_byte_size:
                 continue
-            if len(imgdata) / (width * height * n) <= min_aspect_ratio:
-                continue
 
-            imgfile = os.path.join(imgdir, "img%05i.%s" % (xref, image["ext"]))
-            fout = open(imgfile, "wb")
+            img_file = os.path.join(output_dir, "img%05i.%s" % (xref, image["ext"]))
+            img_files.append(img_file)
+            fout = open(img_file, "wb")
             fout.write(imgdata)
             fout.close()
             xreflist.append(xref)
+
+    return sorted(set(img_files))
