@@ -510,7 +510,15 @@ def main():
         mov_avg_window=args.mov_avg_window,
     )
 
-    image = cv2.imread(args.input_image)
+    dewarped_img = dewarp(args.input_image, config, args.debug)
+
+    output_fpath = "./alto_output.png"
+    cv2.imwrite(output_fpath, dewarped_img)
+    print(f"saved dewarped image to {output_fpath}")
+
+
+def dewarp(input_image: str, config: Config, debug: bool):
+    image = cv2.imread(input_image)
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     height, width = gray.shape
@@ -519,12 +527,12 @@ def main():
     small_height = int(small_width * aspect_ratio)
     gray_small = cv2.resize(gray, (small_width, small_height))
 
-    if args.debug:
+    if debug:
         save_debug_image(gray_small, "01_gray")
 
-    params, page_dims = get_dewarp_params(gray_small, config, debug=args.debug)
+    params, page_dims = get_dewarp_params(gray_small, config, debug=debug)
     img_remapped = remap(image, page_dims, params, config)
-    if args.debug:
+    if debug:
         save_debug_image(img_remapped, "07_remapped")
 
     img_remapped_binary = cv2.adaptiveThreshold(
@@ -545,16 +553,13 @@ def main():
         25,
     )
 
-    horizontal_lines = get_horizontal_lines(img_binary, config, args.debug)
+    horizontal_lines = get_horizontal_lines(img_binary, config, debug)
     img_derotated = derotate(img_binary, horizontal_lines)
 
-    original_fpath = "./alto_original.png"
-    output_fpath = "./alto_output.png"
-    derotated_fpath = "./alto_derotated.png"
-    cv2.imwrite(original_fpath, img_binary)
-    cv2.imwrite(output_fpath, img_remapped_binary)
-    cv2.imwrite(derotated_fpath, img_derotated)
-    print(f"saved {original_fpath} and {output_fpath}")
+    if debug:
+        save_debug_image(img_binary, "08_binary")
+
+    return img_remapped_binary
 
 
 if __name__ == "__main__":
