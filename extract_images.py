@@ -74,9 +74,10 @@ def extract_pdf_images(
             if len(imgdata) <= min_byte_size:
                 continue
 
-            img_file = os.path.join(output_dir, "img%05i.%s" % (xref, image["ext"]))
+            img_file = "img_%05i_%05i.%s" % (pno + 1, xref, image["ext"])
+            img_file_path = os.path.join(output_dir, img_file)
             img_files.append(img_file)
-            fout = open(img_file, "wb")
+            fout = open(img_file_path, "wb")
             fout.write(imgdata)
             fout.close()
             xreflist.append(xref)
