@@ -1,7 +1,9 @@
 import argparse
 import os
+from pathlib import Path
 
 import cv2
+from fpdf import FPDF, Align
 
 from derotate import ADAPTIVE_WINSZ, derotate
 from extract_images import extract_pdf_images
@@ -31,11 +33,19 @@ def main():
         default=0.2,
         help="Minimum width relative to maximum width for a line to be considered",
     )
+    parser.add_argument(
+        "--page-format",
+        type=str,
+        choices=("A4", "Letter"),
+        default="A4",
+        help="Page format of output PDF file.",
+    )
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
     img_files = extract_pdf_images(args.pdf_file, args.img_output_dir)
-    print(img_files)
+
+    pdf = FPDF(format=args.page_format)
     for i, img_file in enumerate(img_files):
         print(f"-> dewarping image {i+1}/{len(img_files)}")
         img_file_path = os.path.join(args.img_output_dir, img_file)
@@ -45,6 +55,14 @@ def main():
         out_img_file = "{0}_{2}{1}".format(*os.path.splitext(img_file) + ("derotate",))
         out_img_file_path = os.path.join(args.img_output_dir, out_img_file)
         cv2.imwrite(out_img_file_path, derotated_img)
+        pdf.add_page()
+        pdf.image(
+            out_img_file_path, Align.C, 0, pdf.epw, pdf.eph, keep_aspect_ratio=True
+        )
+
+    pdf_path = f"{Path(args.pdf_file).stem}_derotated.pdf"
+    pdf.output(pdf_path)
+    print(f"saved derotated PDF to {pdf_path}")
 
 
 if __name__ == "__main__":
