@@ -56,9 +56,8 @@ def main():
         out_img_file_path = os.path.join(args.img_output_dir, out_img_file)
         cv2.imwrite(out_img_file_path, derotated_img)
         pdf.add_page()
-        pdf.image(
-            out_img_file_path, Align.C, 0, pdf.epw, pdf.eph, keep_aspect_ratio=True
-        )
+        # TODO center align here and dewarp pdf
+        pdf.image(out_img_file_path, 0, 0, pdf.epw, pdf.eph, keep_aspect_ratio=True)
 
     pdf_path = f"{Path(args.pdf_file).stem}_derotated.pdf"
     pdf.output(pdf_path)
