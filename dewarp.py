@@ -16,6 +16,7 @@ TVEC_IDX = slice(3, 6)
 CUBIC_IDX = slice(6, 8)
 
 PAGE_MARGIN_Y = 50
+SMALL_WIDTH = 1500
 PAGE_MARGIN_X = 50
 FOCAL_LENGTH = 1.8
 OUTPUT_RESCALE = 1.0
@@ -32,6 +33,7 @@ MAX_RELATIVE_HEIGHT = 1.5
 class Config:
     page_margin_y: int = PAGE_MARGIN_Y
     page_margin_x: int = PAGE_MARGIN_X
+    small_width: int = SMALL_WIDTH
     focal_length: float = FOCAL_LENGTH
     output_rescale: float = OUTPUT_RESCALE
     remap_decimate: int = REMAP_DECIMATE
@@ -488,6 +490,12 @@ def main():
         help="Reduced px to ignore near T/B edge",
     )
     parser.add_argument(
+        "--small-width",
+        type=int,
+        default=SMALL_WIDTH,
+        help="Width of downsized image for warp detection",
+    )
+    parser.add_argument(
         "--focal-length",
         type=float,
         default=FOCAL_LENGTH,
@@ -546,6 +554,7 @@ def main():
     config = Config(
         page_margin_x=args.page_margin_x,
         page_margin_y=args.page_margin_y,
+        small_width=args.small_width,
         focal_length=args.focal_length,
         output_rescale=args.output_rescale,
         remap_decimate=args.remap_decimate,
