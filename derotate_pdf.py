@@ -6,7 +6,7 @@ import cv2
 from fpdf import FPDF, Align
 
 from derotate import ADAPTIVE_WINSZ, derotate
-from extract_images import extract_pdf_images
+from extract_images import add_borders_to_aspect_ratio, extract_pdf_images
 
 
 def main():
@@ -47,17 +47,19 @@ def main():
 
     pdf = FPDF(format=args.page_format)
     for i, img_file in enumerate(img_files):
-        print(f"-> dewarping image {i+1}/{len(img_files)}")
+        print(f"-> derotating image {i+1}/{len(img_files)}")
         img_file_path = os.path.join(args.img_output_dir, img_file)
         derotated_img = derotate(
             img_file_path, args.max_line_angle, args.min_relative_width, args.debug
         )
+        derotated_img = add_borders_to_aspect_ratio(derotated_img, pdf.epw / pdf.eph)
+        print(derotated_img.shape)
         out_img_file = "{0}_{2}{1}".format(*os.path.splitext(img_file) + ("derotate",))
         out_img_file_path = os.path.join(args.img_output_dir, out_img_file)
         cv2.imwrite(out_img_file_path, derotated_img)
-        pdf.add_page()
+        pdf.add_page(format=args.page_format)
         # TODO center align here and dewarp pdf
-        pdf.image(out_img_file_path, 0, 0, pdf.epw, pdf.eph, keep_aspect_ratio=True)
+        pdf.image(out_img_file_path, 0, 0, pdf.epw, keep_aspect_ratio=True)
 
     pdf_path = f"{Path(args.pdf_file).stem}_derotated.pdf"
     pdf.output(pdf_path)

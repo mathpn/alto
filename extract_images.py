@@ -1,5 +1,6 @@
 import os
 
+import cv2
 import fitz
 
 
@@ -83,3 +84,32 @@ def extract_pdf_images(
             xreflist.append(xref)
 
     return sorted(set(img_files))
+
+
+def add_borders_to_aspect_ratio(image, desired_aspect_ratio):
+    original_height, original_width = image.shape[:2]
+    original_aspect_ratio = original_width / original_height
+
+    if original_aspect_ratio > desired_aspect_ratio:
+        new_width = original_width
+        new_height = int(new_width / desired_aspect_ratio)
+    else:
+        new_height = original_height
+        new_width = int(new_height * desired_aspect_ratio)
+
+    top_border = (new_height - original_height) // 2
+    bottom_border = new_height - original_height - top_border
+    left_border = (new_width - original_width) // 2
+    right_border = new_width - original_width - left_border
+
+    bordered_image = cv2.copyMakeBorder(
+        image,
+        top_border,
+        bottom_border,
+        left_border,
+        right_border,
+        cv2.BORDER_CONSTANT,
+        value=[255, 255, 255],
+    )
+
+    return bordered_image
