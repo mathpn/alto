@@ -46,6 +46,7 @@ def main():
     img_files = extract_pdf_images(args.pdf_file, args.img_output_dir)
 
     pdf = FPDF(format=args.page_format)
+    pdf.set_margins(0, 0, 0)
     for i, img_file in enumerate(img_files):
         print(f"-> derotating image {i+1}/{len(img_files)}")
         img_file_path = os.path.join(args.img_output_dir, img_file)
@@ -53,13 +54,11 @@ def main():
             img_file_path, args.max_line_angle, args.min_relative_width, args.debug
         )
         derotated_img = add_borders_to_aspect_ratio(derotated_img, pdf.epw / pdf.eph)
-        print(derotated_img.shape)
         out_img_file = "{0}_{2}{1}".format(*os.path.splitext(img_file) + ("derotate",))
         out_img_file_path = os.path.join(args.img_output_dir, out_img_file)
         cv2.imwrite(out_img_file_path, derotated_img)
-        pdf.add_page(format=args.page_format)
-        # TODO center align here and dewarp pdf
-        pdf.image(out_img_file_path, 0, 0, pdf.epw, keep_aspect_ratio=True)
+        pdf.add_page()
+        pdf.image(out_img_file_path, Align.C, None, pdf.epw, pdf.eph)
 
     pdf_path = f"{Path(args.pdf_file).stem}_derotated.pdf"
     pdf.output(pdf_path)
