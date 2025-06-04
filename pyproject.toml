@@ -1,0 +1,13 @@
+[project]
+name = "alto"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "music21>=9.7.0",
+    "numpy==1.26.4",
+    "oemer>=0.1.8",
+    "opencv-python==4.9.0.80",
+    "scipy>=1.15.3",
+]
